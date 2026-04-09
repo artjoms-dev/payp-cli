@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# payp credentials — NEVER commit
+*.cred
+*.secret
+
+# payp local state
+exports/
+.payp/
+payp/
+
+# Landing page experiments
+landing-experiments/
+
+# Project-specific
+CLAUDE.md
+
+# Claude Code
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
