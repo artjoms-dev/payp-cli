@@ -46,11 +46,31 @@ HARD_BLOCK_STATEMENTS = {
 }
 
 
+# payp's DbType values don't match sqlglot's dialect identifiers 1:1.
+# DbType.POSTGRESQL.value == "postgresql" but sqlglot only accepts
+# "postgres". Normalize at the classifier boundary so callers can pass
+# the raw DbType.value without worrying about it.
+_DIALECT_ALIASES = {
+    "postgresql": "postgres",
+    "postgres": "postgres",
+    "pg": "postgres",
+    "mysql": "mysql",
+    "mariadb": "mysql",
+    "oracle": "oracle",
+    "oracledb": "oracle",
+}
+
+
+def _normalize_dialect(dialect: str) -> str:
+    return _DIALECT_ALIASES.get((dialect or "").lower(), "postgres")
+
+
 def classify_sql(sql: str, dialect: str = "postgres") -> SqlClassification:
     """Classify a SQL statement for security mode routing.
 
     Returns SqlClassification with category and risk details.
     """
+    dialect = _normalize_dialect(dialect)
     sql_stripped = sql.strip().rstrip(";").strip()
     if not sql_stripped:
         return SqlClassification(
@@ -255,6 +275,7 @@ def statically_hard_blocked(sql: str, dialect: str = "postgres") -> str | None:
     pattern, else None. Matches layer-1 safety rules that must never rely
     on LLM judgement.
     """
+    dialect = _normalize_dialect(dialect)
     sql_stripped = sql.strip().rstrip(";").strip()
     if not sql_stripped:
         return None
