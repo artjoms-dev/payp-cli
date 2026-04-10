@@ -21,7 +21,6 @@ import httpx
 
 from payp.tools.base import BaseTool, ToolResult
 
-
 DEFAULT_TIMEOUT = 30
 MAX_BODY_BYTES = 50_000  # first 50KB of text
 MAX_BINARY_BYTES = 10_000  # first 10KB of binary (base64-encoded)

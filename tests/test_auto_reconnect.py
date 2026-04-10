@@ -29,7 +29,6 @@ import traceback
 from payp.db.connection import ConnectionManager, _PostgresDriver
 from payp.models import ConnectionCredential, ConnectionProfile, DbType
 
-
 PG_PROFILE = ConnectionProfile(
     name="pg-local",
     db_type=DbType.POSTGRESQL,
@@ -46,9 +45,9 @@ PG_CRED = ConnectionCredential(password="payp_dev")
 # ---------------------------------------------------------------------------
 
 def test_pg_connection_error_detection() -> None:
-    from payp.db.connection import _is_pg_connection_error
-
     import psycopg
+
+    from payp.db.connection import _is_pg_connection_error
 
     assert _is_pg_connection_error(psycopg.OperationalError("boom"))
     assert _is_pg_connection_error(psycopg.InterfaceError("connection closed"))

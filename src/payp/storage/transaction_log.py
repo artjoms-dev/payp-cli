@@ -7,9 +7,8 @@ Every operation logged: who, what, when, which mode, result, model used.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
 
 LOG_DIR = Path("./payp/log")
 DB_FILE = LOG_DIR / "transactions.db"
@@ -73,7 +72,7 @@ class TransactionLog:
         user_id: str | None = None,
     ) -> int:
         """Log a transaction and return the row id."""
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         conn = sqlite3.connect(DB_FILE)
         try:
             cur = conn.execute("""

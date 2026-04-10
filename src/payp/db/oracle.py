@@ -15,7 +15,6 @@ import oracledb
 
 from payp.models import ConnectionCredential, ConnectionProfile, QueryResult
 
-
 _PLACEHOLDER_RE = re.compile(r"%s")
 
 _ORACLE_CONN_MARKERS = (

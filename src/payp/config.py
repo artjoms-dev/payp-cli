@@ -13,12 +13,19 @@ from pathlib import Path
 
 import tomli_w
 
-from payp.models import AppConfig, ConnectionCredential, ConnectionProfile, MemoryConfig, ModelProvider, ModelRoles
+from payp.models import (
+    AppConfig,
+    ConnectionCredential,
+    ConnectionProfile,
+    MemoryConfig,
+    ModelProvider,
+    ModelRoles,
+)
 
 try:
     import tomllib
 except ImportError:
-    import tomli as tomllib  # type: ignore[no-redef]
+    import tomli as tomllib  # type: ignore[no-redef,import-not-found]
 
 
 GLOBAL_DIR = Path.home() / ".payp"

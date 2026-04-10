@@ -6,7 +6,6 @@ Avoids burning tool-round budget on row-by-row inserts.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
@@ -54,6 +53,7 @@ class BulkInsertTool(BaseTool):
 
     async def call(self, args: dict[str, Any], context: dict[str, Any]) -> ToolResult:
         from payp.db.connection import ConnectionManager
+        from payp.db.identifiers import qualified, quote_ident, split_and_validate_table
         from payp.models import DbType
 
         conn: ConnectionManager | None = context.get("connection_manager")
@@ -69,27 +69,36 @@ class BulkInsertTool(BaseTool):
             return ToolResult(success=False, error="table, columns, rows all required")
 
         dialect = conn.profile.db_type
+
+        # Validate and quote all identifiers once up front
+        try:
+            schema, tbl = split_and_validate_table(table)
+            table_q = qualified(dialect, schema, tbl)
+            cols_q = [quote_ident(dialect, c) for c in columns]
+        except ValueError as e:
+            return ToolResult(success=False, error=f"Invalid identifier: {e}")
+
         total_rows = len(rows)
         inserted = 0
         errors: list[str] = []
 
-        # Batch-insert
+        # Batch-insert (parameterized — no value interpolation)
         for batch_start in range(0, total_rows, batch_size):
             batch = rows[batch_start:batch_start + batch_size]
             try:
-                sql = _build_bulk_sql(dialect, table, columns, batch)
-                await conn.execute_raw(sql)
+                sql, params = _build_bulk_sql(dialect, table_q, cols_q, batch)
+                await conn.execute_raw(sql, params)
                 inserted += len(batch)
             except Exception as e:
                 err_str = str(e)
                 errors.append(f"batch {batch_start}-{batch_start + len(batch)}: {err_str[:150]}")
                 # Oracle IDENTITY drift recovery + fallback to per-row inserts
                 if dialect == DbType.ORACLE and ("ORA-00001" in err_str or "unique constraint" in err_str):
-                    fix_result = await _attempt_oracle_sequence_fix(conn, table)
+                    fix_result = await _attempt_oracle_sequence_fix(conn, table_q)
                     if fix_result.get("fixed"):
                         errors.append(f"→ auto-fixed IDENTITY sequence to start at {fix_result['next_id']}")
                     # Fall back to per-row INSERT (works around Oracle INSERT ALL+IDENTITY quirks)
-                    batch_inserted = await _insert_per_row(conn, table, columns, batch)
+                    batch_inserted = await _insert_per_row(conn, table_q, cols_q, batch)
                     inserted += batch_inserted
                     if batch_inserted == len(batch):
                         errors.append(f"→ batch {batch_start} succeeded via per-row fallback")
@@ -98,7 +107,7 @@ class BulkInsertTool(BaseTool):
                         errors.append(f"→ per-row fallback inserted {batch_inserted}/{len(batch)}")
                         break
                 # For non-Oracle or non-sequence errors, try per-row fallback too
-                batch_inserted = await _insert_per_row(conn, table, columns, batch)
+                batch_inserted = await _insert_per_row(conn, table_q, cols_q, batch)
                 if batch_inserted > 0:
                     inserted += batch_inserted
                     errors.append(f"→ per-row fallback: {batch_inserted}/{len(batch)}")
@@ -123,54 +132,53 @@ class BulkInsertTool(BaseTool):
 
 
 def _build_bulk_sql(
-    dialect: Any, table: str, columns: list[str], rows: list[list[Any]]
-) -> str:
-    """Build dialect-appropriate bulk INSERT."""
+    dialect: Any,
+    table_q: str,
+    cols_q: list[str],
+    rows: list[list[Any]],
+) -> tuple[str, tuple[Any, ...]]:
+    """Build dialect-appropriate parameterized bulk INSERT.
+
+    `table_q` and each entry of `cols_q` must already be validated and
+    dialect-quoted. Row values are passed via driver paramstyle (%s) — the
+    Oracle driver translates these to :1, :2, ... automatically.
+    Returns (sql, flat_params_tuple).
+    """
     from payp.models import DbType
 
-    cols_csv = ", ".join(columns)
+    cols_csv = ", ".join(cols_q)
+    ncols = len(cols_q)
+    per_row_ph = "(" + ", ".join(["%s"] * ncols) + ")"
+
+    flat_params: list[Any] = []
+    for row in rows:
+        flat_params.extend(row)
 
     if dialect == DbType.ORACLE:
-        # INSERT ALL ... SELECT 1 FROM dual
+        # INSERT ALL INTO t (cols) VALUES (...) INTO t (cols) VALUES (...) SELECT 1 FROM dual
         lines = ["INSERT ALL"]
-        for row in rows:
-            vals = ", ".join(_format_value(v) for v in row)
-            lines.append(f"  INTO {table} ({cols_csv}) VALUES ({vals})")
+        for _ in rows:
+            lines.append(f"  INTO {table_q} ({cols_csv}) VALUES {per_row_ph}")  # nosec B608
         lines.append("SELECT 1 FROM dual")
-        return "\n".join(lines)
-    else:
-        # PG + MySQL: INSERT INTO t (cols) VALUES (...), (...), (...)
-        values_list = []
-        for row in rows:
-            vals = ", ".join(_format_value(v) for v in row)
-            values_list.append(f"({vals})")
-        return f"INSERT INTO {table} ({cols_csv}) VALUES " + ", ".join(values_list)
+        return "\n".join(lines), tuple(flat_params)
 
-
-def _format_value(v: Any) -> str:
-    """SQL-format a Python value for inline insertion."""
-    if v is None:
-        return "NULL"
-    if isinstance(v, bool):
-        return "TRUE" if v else "FALSE"
-    if isinstance(v, (int, float)):
-        return str(v)
-    # String — escape single quotes
-    escaped = str(v).replace("'", "''")
-    return f"'{escaped}'"
+    # PG + MySQL: INSERT INTO t (cols) VALUES (...), (...), ...
+    values_clause = ", ".join([per_row_ph] * len(rows))
+    sql = f"INSERT INTO {table_q} ({cols_csv}) VALUES {values_clause}"  # nosec B608
+    return sql, tuple(flat_params)
 
 
 async def _insert_per_row(
-    conn: Any, table: str, columns: list[str], rows: list[list[Any]]
+    conn: Any, table_q: str, cols_q: list[str], rows: list[list[Any]]
 ) -> int:
-    """Insert rows one at a time. Returns count successfully inserted."""
-    cols_csv = ", ".join(columns)
+    """Insert rows one at a time (parameterized). Returns count inserted."""
+    cols_csv = ", ".join(cols_q)
+    placeholders = "(" + ", ".join(["%s"] * len(cols_q)) + ")"
+    sql = f"INSERT INTO {table_q} ({cols_csv}) VALUES {placeholders}"  # nosec B608
     inserted = 0
     for row in rows:
-        vals = ", ".join(_format_value(v) for v in row)
-        sql = f"INSERT INTO {table} ({cols_csv}) VALUES ({vals})"
         try:
-            await conn.execute_raw(sql)
+            await conn.execute_raw(sql, tuple(row))
             inserted += 1
         except Exception:
             # Skip this row, keep going
@@ -178,19 +186,17 @@ async def _insert_per_row(
     return inserted
 
 
-async def _attempt_oracle_sequence_fix(conn: Any, table: str) -> dict[str, Any]:
-    """Try to fix Oracle IDENTITY sequence drift. Returns {fixed: bool, next_id: int}."""
-    # Parse schema.table or use owner default
-    if "." in table:
-        _, tbl = table.split(".", 1)
-    else:
-        tbl = table
-    tbl_upper = tbl.upper()
+async def _attempt_oracle_sequence_fix(conn: Any, table_q: str) -> dict[str, Any]:
+    """Try to fix Oracle IDENTITY sequence drift.
 
+    `table_q` must already be validated + dialect-quoted. `next_id` is a
+    locally-computed int, not user input, so it is interpolated safely.
+    Returns {fixed: bool, next_id: int}.
+    """
     try:
         # Find id column name (usually 'id' or 'ID')
         rows = await conn.execute_raw(
-            f"SELECT MAX(id) as max_id FROM {table}"
+            f"SELECT MAX(id) as max_id FROM {table_q}"  # nosec B608
         )
         if not rows or rows[0].get("max_id") is None:
             return {"fixed": False}
@@ -200,15 +206,15 @@ async def _attempt_oracle_sequence_fix(conn: Any, table: str) -> dict[str, Any]:
         # Oracle: use RESTART START WITH, not just START WITH (which doesn't reset)
         try:
             await conn.execute_raw(
-                f"ALTER TABLE {table} MODIFY id GENERATED BY DEFAULT AS IDENTITY (RESTART START WITH {next_id})"
+                f"ALTER TABLE {table_q} MODIFY id GENERATED BY DEFAULT AS IDENTITY (RESTART START WITH {next_id})"  # nosec B608
             )
         except Exception:
             # Fall back to drop-and-recreate the identity
             await conn.execute_raw(
-                f"ALTER TABLE {table} MODIFY id DROP IDENTITY"
+                f"ALTER TABLE {table_q} MODIFY id DROP IDENTITY"  # nosec B608
             )
             await conn.execute_raw(
-                f"ALTER TABLE {table} MODIFY id GENERATED BY DEFAULT AS IDENTITY (START WITH {next_id})"
+                f"ALTER TABLE {table_q} MODIFY id GENERATED BY DEFAULT AS IDENTITY (START WITH {next_id})"  # nosec B608
             )
         return {"fixed": True, "next_id": next_id}
     except Exception:

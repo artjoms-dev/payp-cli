@@ -45,7 +45,6 @@ from payp.mcp.tools_adapter import (
 from payp.models import SecurityMode
 from payp.tools.base import ToolResult
 
-
 # --- logging: always stderr for stdio MCP servers ---
 logging.basicConfig(
     level=logging.INFO,

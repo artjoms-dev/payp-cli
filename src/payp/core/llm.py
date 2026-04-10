@@ -7,14 +7,14 @@ Handles streaming, tool calling, and cost tracking.
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any
 
 import litellm
 
 from payp.config import load_model_roles, load_models_config
 from payp.models import CostTracker
-
 
 # Suppress litellm's verbose logging
 litellm.suppress_debug_info = True
@@ -212,7 +212,6 @@ class LLMClient:
 
         # After stream ends, yield tool calls if any
         if collected_tool_calls:
-            import json
             tool_calls_list = []
             for _idx, tc_data in sorted(collected_tool_calls.items()):
                 tool_calls_list.append(tc_data)

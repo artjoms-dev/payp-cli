@@ -7,7 +7,6 @@ from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
 
-
 HELP_DIR = Path(__file__).parent.parent.parent.parent / "docs" / "help"
 
 

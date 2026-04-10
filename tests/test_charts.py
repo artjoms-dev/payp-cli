@@ -19,7 +19,6 @@ from payp.ui.charts import (
     sparkline,
 )
 
-
 random.seed(42)
 
 

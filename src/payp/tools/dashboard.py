@@ -6,6 +6,11 @@ from collections import OrderedDict
 from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
+from payp.tools.chart import (
+    _group_series,
+    _pivot_to_grid,
+    _pivot_to_stacks,
+)
 from payp.ui.charts import (
     capture_render,
     render_bar_chart,
@@ -18,12 +23,6 @@ from payp.ui.charts import (
     render_scatter,
     render_stacked_bar,
 )
-from payp.tools.chart import (
-    _group_series,
-    _pivot_to_grid,
-    _pivot_to_stacks,
-)
-
 
 VALID_LAYOUTS = {"2x2", "1x3", "2x3", "3x2"}
 

@@ -10,9 +10,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from payp.db.connection import ConnectionError, ConnectionManager
+from payp.db.connection import ConnectionManager
 from payp.models import ConnectionCredential, ConnectionProfile, SchemaCatalog, SchemaIndex
-
 
 # Matches @connection-name at start of text
 PREFIX_PATTERN = re.compile(r"^@(\S+)\s+", re.MULTILINE)

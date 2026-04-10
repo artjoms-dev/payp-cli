@@ -18,9 +18,10 @@ from __future__ import annotations
 from typing import Any
 
 from payp.db.connection import ConnectionManager
+from payp.db.identifiers import qualified as _qualified
+from payp.db.identifiers import quote_ident as _quote_ident
 from payp.models import DbType
 from payp.tools.base import BaseTool, ToolResult
-
 
 # ---------------------------------------------------------------------------
 # Type classification
@@ -78,24 +79,6 @@ def _classify(data_type: str) -> str:
     if "date" in dt or "time" in dt:
         return "date"
     return "other"
-
-
-# ---------------------------------------------------------------------------
-# Dialect-aware identifier quoting
-# ---------------------------------------------------------------------------
-
-def _quote_ident(db_type: DbType, ident: str) -> str:
-    if db_type == DbType.MYSQL:
-        return f"`{ident.replace('`', '``')}`"
-    # PostgreSQL and Oracle both use double-quote
-    return '"' + ident.replace('"', '""') + '"'
-
-
-def _qualified(db_type: DbType, schema: str | None, table: str) -> str:
-    tbl = _quote_ident(db_type, table)
-    if schema:
-        return f"{_quote_ident(db_type, schema)}.{tbl}"
-    return tbl
 
 
 def _default_schema(db_type: DbType) -> str:
@@ -252,15 +235,16 @@ async def _column_stats(
     try:
         if use_sample:
             # Sample subquery for distinct
+            # col_q and qual are validated + dialect-quoted via db.identifiers
             if conn.db_type == DbType.ORACLE:
                 distinct_sql = (
-                    f"SELECT COUNT(*) AS total, COUNT({col_q}) AS non_null, "
+                    f"SELECT COUNT(*) AS total, COUNT({col_q}) AS non_null, "  # nosec B608
                     f"COUNT(DISTINCT {col_q}) AS distinct_count "
                     f"FROM (SELECT {col_q} FROM {qual} FETCH FIRST 100000 ROWS ONLY)"
                 )
             else:
                 distinct_sql = (
-                    f"SELECT COUNT(*) AS total, COUNT({col_q}) AS non_null, "
+                    f"SELECT COUNT(*) AS total, COUNT({col_q}) AS non_null, "  # nosec B608
                     f"COUNT(DISTINCT {col_q}) AS distinct_count "
                     f"FROM (SELECT {col_q} FROM {qual} LIMIT 100000) sub"
                 )
@@ -277,7 +261,7 @@ async def _column_stats(
                 result["distinct_sampled"] = True
         else:
             base_sql = (
-                f"SELECT COUNT({col_q}) AS non_null, "
+                f"SELECT COUNT({col_q}) AS non_null, "  # nosec B608
                 f"COUNT(DISTINCT {col_q}) AS distinct_count "
                 f"FROM {qual}"
             )
@@ -299,13 +283,13 @@ async def _column_stats(
             pct = _percentile_select(conn.db_type, col_q)
             if pct:
                 num_sql = (
-                    f"SELECT MIN({col_q}) AS minv, MAX({col_q}) AS maxv, AVG({col_q}) AS avgv, "
+                    f"SELECT MIN({col_q}) AS minv, MAX({col_q}) AS maxv, AVG({col_q}) AS avgv, "  # nosec B608
                     f"{pct[0]} AS p50, {pct[1]} AS p95 "
                     f"FROM {qual} WHERE {col_q} IS NOT NULL"
                 )
             else:
                 num_sql = (
-                    f"SELECT MIN({col_q}) AS minv, MAX({col_q}) AS maxv, AVG({col_q}) AS avgv "
+                    f"SELECT MIN({col_q}) AS minv, MAX({col_q}) AS maxv, AVG({col_q}) AS avgv "  # nosec B608
                     f"FROM {qual} WHERE {col_q} IS NOT NULL"
                 )
             nrows = await conn.execute_raw(num_sql)
@@ -326,7 +310,7 @@ async def _column_stats(
     if kind == "text":
         try:
             tsql = (
-                f"SELECT AVG(LENGTH({col_q})) AS avg_len, MAX(LENGTH({col_q})) AS max_len "
+                f"SELECT AVG(LENGTH({col_q})) AS avg_len, MAX(LENGTH({col_q})) AS max_len "  # nosec B608
                 f"FROM {qual} WHERE {col_q} IS NOT NULL"
             )
             trows = await conn.execute_raw(tsql)
@@ -343,7 +327,7 @@ async def _column_stats(
     if kind == "date":
         try:
             dsql = (
-                f"SELECT MIN({col_q}) AS minv, MAX({col_q}) AS maxv "
+                f"SELECT MIN({col_q}) AS minv, MAX({col_q}) AS maxv "  # nosec B608
                 f"FROM {qual} WHERE {col_q} IS NOT NULL"
             )
             drows = await conn.execute_raw(dsql)
@@ -360,7 +344,7 @@ async def _column_stats(
         try:
             limit_clause = _top_n_limit(conn.db_type, 5)
             topsql = (
-                f"SELECT {col_q} AS v, COUNT(*) AS cnt "
+                f"SELECT {col_q} AS v, COUNT(*) AS cnt "  # nosec B608
                 f"FROM {qual} WHERE {col_q} IS NOT NULL "
                 f"GROUP BY {col_q} ORDER BY COUNT(*) DESC {limit_clause}"
             )
@@ -406,7 +390,7 @@ async def profile_table(
 
     qual = _qualified(conn.db_type, schema, table)
     # Total row count
-    cnt_rows = await conn.execute_raw(f"SELECT COUNT(*) AS total FROM {qual}")
+    cnt_rows = await conn.execute_raw(f"SELECT COUNT(*) AS total FROM {qual}")  # nosec B608
     total_rows = int(cnt_rows[0].get("total") or 0) if cnt_rows else 0
 
     column_stats: list[dict[str, Any]] = []

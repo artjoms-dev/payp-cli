@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from payp.tools.export import ExportTool, PROGRESS_THRESHOLD
+from payp.tools.export import PROGRESS_THRESHOLD, ExportTool
 
 
 class FakeConnectionManager:

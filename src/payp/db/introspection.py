@@ -18,7 +18,6 @@ from typing import Any
 from payp.db.connection import ConnectionManager
 from payp.models import DbType, SchemaCatalog, SchemaIndex
 
-
 # System schemas we never introspect
 PG_SYSTEM_SCHEMAS = ("pg_catalog", "information_schema", "pg_toast")
 MYSQL_SYSTEM_SCHEMAS = ("information_schema", "mysql", "performance_schema", "sys")
@@ -62,6 +61,7 @@ async def discover_t0(conn: ConnectionManager) -> SchemaIndex:
         """)
     elif conn.db_type == DbType.ORACLE:
         excl = _oracle_excl_list()
+        # excl is built from a hardcoded ORACLE_SYSTEM_SCHEMAS tuple
         rows = await conn.execute_raw(f"""
             SELECT owner AS table_schema, 'BASE TABLE' AS table_type, COUNT(*) AS cnt
               FROM all_tables
@@ -72,7 +72,7 @@ async def discover_t0(conn: ConnectionManager) -> SchemaIndex:
               FROM all_views
              WHERE owner NOT IN ({excl})
              GROUP BY owner
-        """)
+        """)  # nosec B608
     else:
         raise ValueError(f"Unsupported db_type: {conn.db_type}")
 
@@ -123,12 +123,13 @@ async def discover_t1(conn: ConnectionManager) -> SchemaCatalog:
         """)
     elif conn.db_type == DbType.ORACLE:
         excl = _oracle_excl_list()
+        # excl is built from a hardcoded ORACLE_SYSTEM_SCHEMAS tuple
         rows = await conn.execute_raw(f"""
             SELECT owner AS table_schema, table_name
               FROM all_tables
              WHERE owner NOT IN ({excl})
              ORDER BY owner, table_name
-        """)
+        """)  # nosec B608
     else:
         raise ValueError(f"Unsupported db_type: {conn.db_type}")
 

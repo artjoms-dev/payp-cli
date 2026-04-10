@@ -11,7 +11,6 @@ from typing import Any
 
 import litellm
 
-
 # Start compacting when we hit this fraction of the model's context window
 COMPACT_THRESHOLD = 0.75
 

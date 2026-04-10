@@ -12,7 +12,6 @@ from typing import Any
 
 from rich.console import Console
 
-
 _console = Console()
 
 
@@ -920,6 +919,7 @@ def capture_render(render_fn, *args, **kwargs) -> str:
     Useful for embedding charts in dashboard panels.
     """
     from io import StringIO
+
     from rich.console import Console as _C
 
     buf = StringIO()

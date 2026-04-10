@@ -21,7 +21,6 @@ from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
 
-
 VALID_TARGETS = (
     "sessions",
     "queries",

@@ -8,7 +8,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-
 SNAPSHOTS_DIR = Path("./payp/snapshots")
 
 

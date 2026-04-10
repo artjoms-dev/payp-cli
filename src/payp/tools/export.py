@@ -23,7 +23,6 @@ from rich.progress import (
 
 from payp.tools.base import BaseTool, ToolResult
 
-
 DEFAULT_EXPORT_DIR = Path("./exports")
 
 # Excel hard limit — 1,048,576 rows total, minus 1 for header row.

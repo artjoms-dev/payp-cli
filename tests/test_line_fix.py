@@ -8,8 +8,8 @@ Verifies render_line_chart / render_multi_line produce scannable axes:
 
 from __future__ import annotations
 
-import io
 import contextlib
+import io
 
 from payp.ui.charts import (
     capture_render,

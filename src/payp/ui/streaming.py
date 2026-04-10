@@ -5,7 +5,7 @@ Uses rich.live for token-by-token rendering with markdown support.
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from rich.console import Console
 from rich.live import Live

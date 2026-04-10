@@ -16,11 +16,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from payp.models import SchemaIndex, SchemaCatalog, SecurityMode
+from payp.models import SchemaCatalog, SchemaIndex, SecurityMode
 
 # Forward reference to avoid circular import at module load
 if False:  # TYPE_CHECKING-equivalent without importing typing
-    from payp.skills.models import Skill
+    pass
 
 
 # --- Section 1: Identity ---

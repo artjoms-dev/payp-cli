@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated, Any, Optional
+from datetime import UTC
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -38,7 +39,6 @@ from payp.models import (
     ConnectionProfile,
     DbType,
     ModelProvider,
-    ModelRoles,
     SecurityMode,
 )
 
@@ -158,7 +158,12 @@ def main(
 def _show_welcome() -> None:
     from payp.storage.snapshots import snapshot_count
     from payp.ui.dashboard import render_compact_hint, render_status_dashboard
-    from payp.ui.onboarding import is_first_run, run_onboarding, should_prompt_model_setup, prompt_model_setup_only
+    from payp.ui.onboarding import (
+        is_first_run,
+        prompt_model_setup_only,
+        run_onboarding,
+        should_prompt_model_setup,
+    )
 
     # True first-run: no models AND no connections → full onboarding
     if is_first_run():
@@ -277,10 +282,9 @@ def _interactive_loop() -> None:
     """Main interactive chat loop with LLM integration."""
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.styles import Style as PTStyle
 
     from payp.config import global_dir
-
-    from prompt_toolkit.styles import Style as PTStyle
 
     history_file = global_dir() / "history"
     session: PromptSession = PromptSession(  # type: ignore[type-arg]
@@ -1104,7 +1108,7 @@ def _render_stats_table(profile: dict[str, Any]) -> None:
             distinct_str = f"~{distinct_str}"
 
         err = c.get("error")
-        col_name = c["column"] + (f" [red](!)[/red]" if err else "")
+        col_name = c["column"] + (" [red](!)[/red]" if err else "")
 
         t.add_row(
             col_name,
@@ -1291,8 +1295,9 @@ def _cmd_cost() -> None:
 def _cmd_export(args: str) -> None:
     """Export the current conversation session as a shareable markdown file."""
     from datetime import datetime
-    from payp.ui.theme import Color
     from pathlib import Path
+
+    from payp.ui.theme import Color
 
     chat = _state.get("chat_session")
     if not chat or not chat.messages:
@@ -1334,12 +1339,12 @@ def _cmd_export(args: str) -> None:
             continue
 
         if role == "user":
-            lines.append(f"### 👤 User")
+            lines.append("### 👤 User")
             lines.append("")
             lines.append(f"> {content}".replace("\n", "\n> "))
             lines.append("")
         elif role == "assistant":
-            lines.append(f"### 🤖 Assistant")
+            lines.append("### 🤖 Assistant")
             lines.append("")
             lines.append(content)
             lines.append("")
@@ -1554,9 +1559,9 @@ def _format_session_age(ts: str) -> str:
     if not ts:
         return "unknown"
     try:
-        from datetime import datetime, timezone
+        from datetime import datetime
         t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        delta = datetime.now(timezone.utc) - t
+        delta = datetime.now(UTC) - t
         seconds = int(delta.total_seconds())
         if seconds < 60:
             return "just now"
@@ -1928,8 +1933,8 @@ def _cmd_memory(args: str) -> None:
     else:
         size_str = f"{size} B"
 
-    from rich.table import Table
     from rich import box
+    from rich.table import Table
 
     table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
     table.add_column(style="dim", width=14)
@@ -2036,7 +2041,7 @@ def _cmd_snapshots() -> None:
         console.print(f"  Rows: {snap['row_count']}")
         console.print(f"  Where: {snap['where']}")
         console.print(f"  File: {snap['file']}")
-        console.print(f"\n[dim]Ask the assistant to restore this snapshot, or use /snapshots again to delete.[/dim]")
+        console.print("\n[dim]Ask the assistant to restore this snapshot, or use /snapshots again to delete.[/dim]")
 
 
 def _cmd_rollback() -> None:
@@ -2198,9 +2203,9 @@ def _cmd_diff(args: str) -> None:
     """Compare a table's schema between two active connections."""
 
     from payp.core.multi_connection import MultiConnectionManager
-    from payp.ui.theme import Color
     from payp.tools.crossdb import CompareSchemasTool
     from payp.ui.selector import SelectorItem, interactive_select
+    from payp.ui.theme import Color
 
     mc: MultiConnectionManager | None = _state.get("multi_conn_manager")  # type: ignore[assignment]
     if not mc:
@@ -2552,7 +2557,7 @@ def _cmd_quit() -> None:
 
 @app.command()
 def db(
-    name: Annotated[Optional[str], typer.Argument(help="Connection name")] = None,
+    name: Annotated[str | None, typer.Argument(help="Connection name")] = None,
 ) -> None:
     """Manage database connections."""
     _cmd_db(name or "")
@@ -2560,7 +2565,7 @@ def db(
 
 @app.command()
 def models(
-    action: Annotated[Optional[str], typer.Argument(help="Action: add")] = None,
+    action: Annotated[str | None, typer.Argument(help="Action: add")] = None,
 ) -> None:
     """Manage AI model providers."""
     _cmd_models(action or "")
@@ -2568,7 +2573,7 @@ def models(
 
 @app.command()
 def mode(
-    new_mode: Annotated[Optional[str], typer.Argument(help="Security mode")] = None,
+    new_mode: Annotated[str | None, typer.Argument(help="Security mode")] = None,
 ) -> None:
     """Set security mode."""
     _cmd_mode(new_mode or "")

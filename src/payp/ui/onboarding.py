@@ -14,7 +14,7 @@ from rich import box
 from rich.console import Console
 from rich.panel import Panel
 
-from payp.ui.theme import Color, Icon, section, success
+from payp.ui.theme import Color, section, success
 
 if TYPE_CHECKING:
     pass
@@ -62,8 +62,8 @@ def run_onboarding(console: Console) -> None:
     # Step 1: Model
     section(console, "Step 1 of 2 — AI Model")
     console.print(
-        f"[dim]payp needs at least one AI model to generate SQL and "
-        f"analyze data.[/dim]\n"
+        "[dim]payp needs at least one AI model to generate SQL and "
+        "analyze data.[/dim]\n"
     )
 
     # Import here to avoid circular imports
@@ -75,7 +75,7 @@ def run_onboarding(console: Console) -> None:
     # Step 2: Database
     section(console, "Step 2 of 2 — Database Connection")
     console.print(
-        f"[dim]Connect to a database now, or skip and run /db later.[/dim]\n"
+        "[dim]Connect to a database now, or skip and run /db later.[/dim]\n"
     )
 
     choice = pt_prompt("Connect a database now? [Y/n]: ").strip().lower()
@@ -83,13 +83,13 @@ def run_onboarding(console: Console) -> None:
         from payp.cli import _setup_new_connection
         _setup_new_connection()
     else:
-        console.print(f"[dim]Skipped. Run [bold]/db[/bold] when ready.[/dim]")
+        console.print("[dim]Skipped. Run [bold]/db[/bold] when ready.[/dim]")
 
     console.print()
     success(console, "Setup complete!")
     console.print(
-        f"[dim]Type naturally to chat with the assistant, "
-        f"or use slash commands like /help.[/dim]\n"
+        "[dim]Type naturally to chat with the assistant, "
+        "or use slash commands like /help.[/dim]\n"
     )
 
 

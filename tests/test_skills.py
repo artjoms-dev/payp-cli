@@ -5,13 +5,10 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
-
-from payp.skills.loader import parse_skill_file, load_skills_from_dir
+from payp.skills.loader import load_skills_from_dir, parse_skill_file
 from payp.skills.models import Skill, SkillFrontmatter
 from payp.skills.registry import SkillRegistry, discover_skills
 from payp.tools.skills_tool import InvokeSkillTool, ListSkillsTool
-
 
 # ---------------------------------------------------------------------------
 # Helpers

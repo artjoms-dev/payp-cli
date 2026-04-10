@@ -22,7 +22,6 @@ from payp.db.connection import ConnectionManager
 from payp.models import ConnectionCredential, ConnectionProfile, DbType
 from payp.tools.export import ExportTool
 
-
 PROFILE = ConnectionProfile(
     name="pg-local",
     db_type=DbType.POSTGRESQL,

@@ -10,7 +10,7 @@ Files:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +58,7 @@ def load_t1(connection_name: str) -> SchemaCatalog | None:
 def save_metadata(connection_name: str, meta: dict[str, Any]) -> None:
     """Save connection metadata to cache."""
     path = cache_dir() / f"{connection_name}_meta.json"
-    meta["last_check"] = datetime.now(timezone.utc).isoformat()
+    meta["last_check"] = datetime.now(UTC).isoformat()
     path.write_text(json.dumps(meta, indent=2, default=str))
 
 

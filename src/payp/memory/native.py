@@ -10,7 +10,6 @@ from typing import Any
 
 from payp.storage.knowledge import (
     append_table_knowledge,
-    get_knowledge_dir,
     list_knowledge_files,
     list_table_knowledge,
     load_knowledge_for_tables,
@@ -120,7 +119,7 @@ class NativeMemoryBackend:
         return False
 
     async def migrate_from(
-        self, other: "NativeMemoryBackend", connection: str | None = None
+        self, other: NativeMemoryBackend, connection: str | None = None
     ) -> dict[str, Any]:
         """Import all knowledge from another backend."""
         migrated = 0

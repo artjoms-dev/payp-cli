@@ -16,8 +16,7 @@ import re
 
 import pytest
 
-from payp.ui.charts import render_box_plot, capture_render
-
+from payp.ui.charts import capture_render, render_box_plot
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 

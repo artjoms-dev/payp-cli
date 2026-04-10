@@ -7,7 +7,7 @@ Format: one JSON object per line with timestamp, role, content, etc.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from secrets import token_hex
 from typing import Any
@@ -44,7 +44,7 @@ class SessionWriter:
 
     def _write_event(self, event: dict[str, Any]) -> None:
         """Append one event to the JSONL file."""
-        event.setdefault("ts", datetime.now(timezone.utc).isoformat())
+        event.setdefault("ts", datetime.now(UTC).isoformat())
         with open(self.path, "a") as f:
             f.write(json.dumps(event, default=str) + "\n")
 

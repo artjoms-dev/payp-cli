@@ -16,7 +16,6 @@ from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
 
-
 DEFAULT_TIMEOUT = 30
 MAX_OUTPUT = 50_000
 
@@ -98,7 +97,7 @@ class ShellExecTool(BaseTool):
             stdout_b, stderr_b = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             return ToolResult(

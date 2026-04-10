@@ -17,15 +17,15 @@ from typing import Any
 from rich.console import Console
 
 from payp.core.classifier import SqlCategory, classify_sql
-from payp.core.llm import LLMClient, StreamChunk, ToolCall
+from payp.core.llm import LLMClient, ToolCall
 from payp.core.reviewer import Reviewer, Verdict
 from payp.db.connection import ConnectionManager
 from payp.models import SchemaCatalog, SchemaIndex, SecurityMode
+from payp.prompts.system import build_system_prompt
+from payp.skills.registry import SkillRegistry, discover_skills
 from payp.storage.sessions import SessionWriter
 from payp.storage.transaction_log import TransactionLog
-from payp.ui.approval import ApprovalAction, ask_approval
-from payp.prompts.system import build_system_prompt
-from payp.tools.base import BaseTool, ToolRegistry, ToolResult
+from payp.tools.base import BaseTool, ToolRegistry
 from payp.tools.bulk_insert import BulkInsertTool
 from payp.tools.chart import ChartTool
 from payp.tools.crossdb import (
@@ -44,19 +44,17 @@ from payp.tools.knowledge import (
     ReadKnowledgeTool,
     SearchKnowledgeTool,
 )
+from payp.tools.python_exec import PythonExecTool
 from payp.tools.queries import (
     DeleteQueryTool,
     ListQueriesTool,
     LoadQueryTool,
     SaveQueryTool,
 )
-from payp.tools.python_exec import PythonExecTool
 from payp.tools.query import QueryTool
 from payp.tools.r_exec import RExecTool
-from payp.tools.shell_exec import ShellExecTool
-from payp.tools.web_fetch import WebFetchTool
 from payp.tools.schema import CheckCascadeTool, SchemaLookupTool, SchemaSearchTool
-from payp.tools.stats import StatsTool
+from payp.tools.shell_exec import ShellExecTool
 from payp.tools.skills_tool import InvokeSkillTool, ListSkillsTool
 from payp.tools.snapshot import (
     DeleteSnapshotTool,
@@ -64,15 +62,15 @@ from payp.tools.snapshot import (
     RestoreSnapshotTool,
     SnapshotBeforeDeleteTool,
 )
-from payp.skills.registry import SkillRegistry, discover_skills
+from payp.tools.stats import StatsTool
+from payp.tools.web_fetch import WebFetchTool
+from payp.ui.approval import ApprovalAction, ask_approval
 from payp.ui.display import display_dml_result, display_query_result
 from payp.ui.streaming import (
-    display_retry,
     display_tool_call,
     display_tool_result,
     stream_response,
 )
-
 
 MAX_TOOL_ROUNDS = 30  # Prevent infinite tool call loops (Claude Code uses 30-50)
 
@@ -232,10 +230,9 @@ class ChatSession:
 
     async def _handle_knowledge_proposal(self, data: dict[str, Any]) -> dict[str, Any]:
         """Show a knowledge discovery to the user for approval before saving."""
+        from prompt_toolkit import PromptSession
         from rich.markdown import Markdown
         from rich.panel import Panel
-
-        from prompt_toolkit import PromptSession
 
         table = data.get("table", "?")
         conn = data.get("connection", "?")
@@ -332,7 +329,7 @@ class ChatSession:
         self.console.print(
             Panel(
                 Syntax(code, language, theme="monokai", word_wrap=True),
-                title=f"Code execution — approval required",
+                title="Code execution — approval required",
                 subtitle=subtitle,
                 border_style="yellow",
             )
@@ -558,7 +555,7 @@ class ChatSession:
             elif review.verdict == Verdict.SAFER and review.safer_sql:
                 # Use the safer SQL instead (back-and-forth with Model A)
                 self.console.print(
-                    f"  [yellow]→ Using safer version suggested by reviewer[/yellow]"
+                    "  [yellow]→ Using safer version suggested by reviewer[/yellow]"
                 )
                 approved_sql = review.safer_sql
                 review_reason = review.reason

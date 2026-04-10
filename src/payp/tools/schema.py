@@ -174,6 +174,7 @@ class CheckCascadeTool(BaseTool):
                 )
 
             # Get row counts for referencing tables
+            from payp.db.identifiers import qualified, split_and_validate_table
             references = []
             cascade_tables = []
             for row in rows:
@@ -181,11 +182,17 @@ class CheckCascadeTool(BaseTool):
                 ref_col = row["referencing_column"]
                 delete_rule = row["delete_rule"]
 
-                # Get estimated row count
-                ref_parts = ref_table.split(".")
-                count_rows = await conn.execute_raw(f"""
-                    SELECT COUNT(*) as cnt FROM {ref_table}
-                """)
+                # ref_table comes from information_schema — trusted but still
+                # validated + dialect-quoted before interpolation.
+                try:
+                    ref_schema, ref_tbl = split_and_validate_table(ref_table)
+                    ref_q = qualified(conn.db_type, ref_schema, ref_tbl)
+                except ValueError:
+                    # Catalog returned a name we can't safely quote — skip it
+                    continue
+                count_rows = await conn.execute_raw(
+                    f"SELECT COUNT(*) as cnt FROM {ref_q}"  # nosec B608
+                )
                 row_count = count_rows[0]["cnt"] if count_rows else 0
 
                 ref_info = {

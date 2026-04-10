@@ -49,6 +49,9 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.4",
     "mypy>=1.10",
+    "types-Pygments",
+    "types-openpyxl",
+    "types-PyMySQL",
 ]
 
 [project.scripts]
@@ -71,3 +74,7 @@ testpaths = ["tests"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+[[tool.mypy.overrides]]
+module = ["plotille", "aiomysql", "pyarrow.*", "mempalace.*"]
+ignore_missing_imports = true

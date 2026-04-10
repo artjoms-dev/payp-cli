@@ -16,7 +16,6 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
-
 # Column name patterns to deprioritize when table is too wide
 LOW_PRIORITY_COLUMNS = {
     "created_at", "updated_at", "deleted_at",

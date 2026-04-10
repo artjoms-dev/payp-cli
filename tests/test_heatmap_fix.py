@@ -11,7 +11,6 @@ import random
 
 from payp.ui.charts import render_heatmap
 
-
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 HOURS_24 = [f"{h:02d}" for h in range(24)]
 HOURS_12 = [f"{h:02d}" for h in range(0, 24, 2)]  # 12 bins of 2 hours

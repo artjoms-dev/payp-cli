@@ -15,7 +15,6 @@ from pathlib import Path
 
 from payp.skills.models import Skill, SkillFrontmatter
 
-
 # Fields that are parsed as lists (YAML flow-style: [a, b, c])
 _LIST_FIELDS = {"allowed_tools", "db_types"}
 

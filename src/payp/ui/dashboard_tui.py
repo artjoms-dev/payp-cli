@@ -13,7 +13,6 @@ from textual.binding import Binding
 from textual.containers import Grid
 from textual.widgets import Footer, Header, Static
 
-
 # Grid layouts: (columns, rows)
 GRID_LAYOUTS: dict[str, tuple[int, int]] = {
     "1x3": (1, 3),

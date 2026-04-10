@@ -7,15 +7,14 @@ from __future__ import annotations
 
 import time
 
-from rich.console import Console, Group
-from rich.text import Text
-from rich.style import Style
-from rich.color import Color as RichColor
-from rich.panel import Panel
-from rich.table import Table
-from rich.columns import Columns
-from rich.progress import BarColumn, Progress, TextColumn
 from rich import box
+from rich.color import Color as RichColor
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import BarColumn, Progress, TextColumn
+from rich.style import Style
+from rich.table import Table
+from rich.text import Text
 
 # ── Accent palette ──────────────────────────────────────────────────────
 C1 = (168, 0, 111)   # #A8006F

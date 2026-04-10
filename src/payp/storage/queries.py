@@ -12,7 +12,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-
 QUERIES_DIR = Path("./payp/queries")
 
 TAGS_PATTERN = re.compile(r"^--\s*payp:tags:\s*(.+)$", re.MULTILINE | re.IGNORECASE)

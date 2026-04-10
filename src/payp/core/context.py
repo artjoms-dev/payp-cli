@@ -8,13 +8,11 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
 
 from payp.config import global_dir
 from payp.db.connection import ConnectionManager
 from payp.db.introspection import discover_t2
 from payp.models import SchemaCatalog
-
 
 # Max total T2 content to inject per query (approx chars, ~30KB)
 MAX_T2_BUDGET = 30000

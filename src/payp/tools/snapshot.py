@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import md5
 from pathlib import Path
 from typing import Any
@@ -49,6 +49,7 @@ class SnapshotBeforeDeleteTool(BaseTool):
 
     async def call(self, args: dict[str, Any], context: dict[str, Any]) -> ToolResult:
         from payp.db.connection import ConnectionManager
+        from payp.db.identifiers import qualified, split_and_validate_table
 
         conn: ConnectionManager | None = context.get("connection_manager")
         if not conn or not conn.is_connected:
@@ -61,10 +62,18 @@ class SnapshotBeforeDeleteTool(BaseTool):
         if not table:
             return ToolResult(success=False, error="No table specified")
 
-        # Build SELECT to capture affected rows
-        sql = f"SELECT * FROM {table}"
+        try:
+            schema, tbl = split_and_validate_table(table)
+            table_q = qualified(conn.db_type, schema, tbl)
+        except ValueError as e:
+            return ToolResult(success=False, error=str(e))
+
+        # Build SELECT to capture affected rows.
+        # where_clause is free-form by design — part of the tool contract.
+        # It is covered by the same approval flow as execute_sql.
+        sql = f"SELECT * FROM {table_q}"  # nosec B608
         if where:
-            sql += f" WHERE {where}"
+            sql += f" WHERE {where}"  # nosec B608
 
         try:
             # Get all affected rows (no limit for snapshot)
@@ -74,7 +83,7 @@ class SnapshotBeforeDeleteTool(BaseTool):
                 return ToolResult(
                     success=True,
                     data={"row_count": 0, "file": None},
-                    summary=f"No rows match the condition — nothing to snapshot",
+                    summary="No rows match the condition — nothing to snapshot",
                 )
 
             # Check size limit
@@ -104,7 +113,7 @@ class SnapshotBeforeDeleteTool(BaseTool):
                         "table": table,
                         "operation": operation,
                         "where": where or "(all rows)",
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "timestamp": datetime.now(UTC).isoformat(),
                         "connection": conn.profile.name,
                         "row_count": row_count,
                     }
@@ -188,32 +197,30 @@ class RestoreSnapshotTool(BaseTool):
             if not data_rows:
                 return ToolResult(success=True, data={"restored": 0}, summary="No data rows in snapshot")
 
-            # Build and execute INSERT statements in batches
+            # Validate identifiers from snapshot metadata before use
+            from payp.db.identifiers import qualified, quote_ident, split_and_validate_table
+            try:
+                tbl_schema, tbl_name = split_and_validate_table(table)
+                table_q = qualified(conn.db_type, tbl_schema, tbl_name)
+            except ValueError as e:
+                return ToolResult(success=False, error=f"Invalid table in snapshot: {e}")
+
             columns = list(data_rows[0].keys())
+            try:
+                cols_q = ", ".join(quote_ident(conn.db_type, c) for c in columns)
+            except ValueError as e:
+                return ToolResult(success=False, error=f"Invalid column in snapshot: {e}")
+
+            # Build and execute parameterized INSERT row-by-row.
+            # Parameterization prevents injection via snapshot file contents.
             total_restored = 0
-            batch_size = 100
+            placeholders = "(" + ", ".join(["%s"] * len(columns)) + ")"
+            insert_sql = f"INSERT INTO {table_q} ({cols_q}) VALUES {placeholders}"  # nosec B608
 
-            for i in range(0, len(data_rows), batch_size):
-                batch = data_rows[i:i + batch_size]
-                values_list = []
-                for row in batch:
-                    vals = []
-                    for col in columns:
-                        v = row.get(col)
-                        if v is None:
-                            vals.append("NULL")
-                        elif isinstance(v, (int, float)):
-                            vals.append(str(v))
-                        elif isinstance(v, bool):
-                            vals.append("TRUE" if v else "FALSE")
-                        else:
-                            escaped = str(v).replace("'", "''")
-                            vals.append(f"'{escaped}'")
-                    values_list.append(f"({', '.join(vals)})")
-
-                sql = f"INSERT INTO {table} ({', '.join(columns)}) VALUES\n" + ",\n".join(values_list) + ";"
-                await conn.execute_raw(sql)
-                total_restored += len(batch)
+            for row in data_rows:
+                params = tuple(row.get(c) for c in columns)
+                await conn.execute_raw(insert_sql, params)
+                total_restored += 1
 
             return ToolResult(
                 success=True,

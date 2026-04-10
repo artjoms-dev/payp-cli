@@ -11,8 +11,8 @@ import select
 import sys
 import termios
 import tty
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator
 
 
 @contextmanager
@@ -96,7 +96,7 @@ class AbortWatcher:
             return ch in ("\x1b", "q", "Q")
         return False
 
-    async def __aenter__(self) -> "AbortWatcher":
+    async def __aenter__(self) -> AbortWatcher:
         self._stop_flag = False
         self._raw_ctx = _raw_stdin()
         self._raw_ctx.__enter__()
