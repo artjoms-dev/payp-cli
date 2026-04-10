@@ -29,7 +29,14 @@ CREATE TABLE IF NOT EXISTS transactions (
     rows_affected INTEGER,
     execution_ms INTEGER,
     model_used TEXT,
-    user_id TEXT
+    user_id TEXT,
+    -- Reviewer audit trail (added 2026-04-10)
+    reviewer_verdict TEXT,        -- APPROVE / SAFER / HARD_BLOCK / null
+    reviewer_reason TEXT,         -- human-readable explanation
+    reviewer_model TEXT,          -- which model returned the verdict
+    reviewer_overridden INTEGER,  -- 1 if user overrode the reviewer, else 0
+    static_block_reason TEXT,     -- non-null if the static pre-filter blocked
+    consensus_verdict TEXT        -- second reviewer's verdict if consensus mode
 );
 
 CREATE INDEX IF NOT EXISTS idx_transactions_session ON transactions(session_id);
@@ -37,13 +44,37 @@ CREATE INDEX IF NOT EXISTS idx_transactions_connection ON transactions(connectio
 CREATE INDEX IF NOT EXISTS idx_transactions_timestamp ON transactions(timestamp);
 """
 
+# Additive migrations — new columns added over time. SQLite supports
+# `ALTER TABLE ADD COLUMN` but not `IF NOT EXISTS` on it, so we check
+# the schema first and add only what's missing.
+_REVIEWER_COLUMNS = (
+    ("reviewer_verdict", "TEXT"),
+    ("reviewer_reason", "TEXT"),
+    ("reviewer_model", "TEXT"),
+    ("reviewer_overridden", "INTEGER"),
+    ("static_block_reason", "TEXT"),
+    ("consensus_verdict", "TEXT"),
+)
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """Add any missing columns to an existing transactions table."""
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(transactions)").fetchall()
+    }
+    for name, sqltype in _REVIEWER_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE transactions ADD COLUMN {name} {sqltype}")
+
 
 def ensure_log() -> None:
-    """Create the log directory and DB if they don't exist."""
+    """Create the log directory and DB if they don't exist; apply migrations."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_FILE)
     try:
         conn.executescript(SCHEMA_SQL)
+        _apply_migrations(conn)
         conn.commit()
     finally:
         conn.close()
@@ -70,8 +101,20 @@ class TransactionLog:
         execution_ms: int | None = None,
         model_used: str | None = None,
         user_id: str | None = None,
+        reviewer_verdict: str | None = None,
+        reviewer_reason: str | None = None,
+        reviewer_model: str | None = None,
+        reviewer_overridden: bool | None = None,
+        static_block_reason: str | None = None,
+        consensus_verdict: str | None = None,
     ) -> int:
-        """Log a transaction and return the row id."""
+        """Log a transaction and return the row id.
+
+        The `reviewer_*` and `static_block_reason` fields form an audit
+        trail of the security pipeline. When triaging a data incident,
+        you can filter the log by reviewer_overridden=1 to find any
+        operation that executed despite the reviewer's warning.
+        """
         timestamp = datetime.now(UTC).isoformat()
         conn = sqlite3.connect(DB_FILE)
         try:
@@ -80,13 +123,21 @@ class TransactionLog:
                     session_id, timestamp, connection_name, operation_type,
                     sql_executed, reverse_sql, execution_mode, approved_by,
                     status, error_message, rows_affected, execution_ms,
-                    model_used, user_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    model_used, user_id,
+                    reviewer_verdict, reviewer_reason, reviewer_model,
+                    reviewer_overridden, static_block_reason, consensus_verdict
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?
+                )
             """, (
                 self.session_id, timestamp, connection_name, operation_type,
                 sql_executed, reverse_sql, execution_mode, approved_by,
                 status, error_message, rows_affected, execution_ms,
                 model_used, user_id,
+                reviewer_verdict, reviewer_reason, reviewer_model,
+                1 if reviewer_overridden else (0 if reviewer_overridden is False else None),
+                static_block_reason, consensus_verdict,
             ))
             conn.commit()
             return cur.lastrowid or 0

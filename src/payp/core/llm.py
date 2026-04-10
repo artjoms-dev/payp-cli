@@ -97,8 +97,13 @@ class LLMClient:
         model: str | None = None,
         tools: list[ToolDefinition] | None = None,
         stream: bool = True,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
-        """Send a chat completion request. Non-streaming version."""
+        """Send a chat completion request. Non-streaming version.
+
+        `response_format` is passed through verbatim to litellm — used by
+        the reviewer to get structured JSON output via a JSON schema.
+        """
         model = model or self.get_executor_model()
 
         kwargs: dict[str, Any] = {
@@ -109,6 +114,9 @@ class LLMClient:
 
         if tools:
             kwargs["tools"] = [_tool_to_dict(t) for t in tools]
+
+        if response_format is not None:
+            kwargs["response_format"] = response_format
 
         response = await litellm.acompletion(**kwargs)
 
