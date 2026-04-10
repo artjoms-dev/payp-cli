@@ -120,22 +120,29 @@ class SessionWriter:
 
 
 def list_sessions() -> list[dict[str, Any]]:
-    """List all saved sessions, newest first."""
+    """List all saved sessions, newest first.
+
+    Each entry includes a cheap "user_messages" count so callers can filter
+    stubs/empty sessions without a second file-read pass.
+    """
     d = sessions_dir()
     sessions = []
     for f in sorted(d.glob("*.jsonl"), reverse=True):
         try:
-            # Count events and find first/last timestamps
             with open(f) as fp:
                 lines = fp.readlines()
             event_count = len(lines)
             query_count = sum(1 for line in lines if '"event": "query_executed"' in line)
+            # Substring check is enough — role:user lines always contain it.
+            user_msg_count = sum(
+                1 for line in lines if '"role": "user"' in line or '"role":"user"' in line
+            )
 
-            # Parse filename for metadata
             parts = f.stem.split("_")
             date_part = parts[0] if len(parts) >= 1 else "?"
             conn_part = parts[1] if len(parts) >= 2 else "?"
 
+            stat = f.stat()
             sessions.append({
                 "file": str(f),
                 "filename": f.name,
@@ -143,11 +150,84 @@ def list_sessions() -> list[dict[str, Any]]:
                 "connection": conn_part,
                 "events": event_count,
                 "queries": query_count,
-                "size": f.stat().st_size,
+                "user_messages": user_msg_count,
+                "size": stat.st_size,
+                "mtime": stat.st_mtime,
             })
         except Exception:
             pass
     return sessions
+
+
+def is_empty_session(session: dict[str, Any]) -> bool:
+    """A session is 'empty' if no user messages AND no executed queries.
+
+    This catches launch-then-quit stubs regardless of how many internal
+    events (startup, connect, etc.) they contain.
+    """
+    return (session.get("user_messages", 0) == 0
+            and session.get("queries", 0) == 0)
+
+
+def clean_sessions(
+    *,
+    empty: bool = True,
+    older_than_days: int | None = None,
+    keep_last: int | None = None,
+    keep_current: str | None = None,
+) -> dict[str, Any]:
+    """Delete sessions matching cleanup criteria.
+
+    Criteria are combined with OR semantics — a session is removed if it
+    matches ANY of the active filters. If `keep_last` is set, the N most
+    recent sessions are ALWAYS preserved regardless of other filters.
+
+    Args:
+        empty: If True, remove sessions with no user messages and no queries.
+        older_than_days: Remove sessions whose mtime is older than N days.
+        keep_last: Always keep the N most-recent sessions.
+        keep_current: Absolute path of a session to always preserve.
+
+    Returns:
+        {"deleted": [<filenames>], "kept": <n>, "total_before": <n>}
+    """
+    import time
+
+    all_sessions = list_sessions()  # already sorted newest-first
+    total_before = len(all_sessions)
+
+    protected: set[str] = set()
+    if keep_last is not None and keep_last > 0:
+        for s in all_sessions[:keep_last]:
+            protected.add(s["file"])
+    if keep_current:
+        protected.add(keep_current)
+
+    now = time.time()
+    cutoff = (
+        now - older_than_days * 86400 if older_than_days is not None else None
+    )
+
+    deleted: list[str] = []
+    for s in all_sessions:
+        if s["file"] in protected:
+            continue
+
+        should_delete = False
+        if empty and is_empty_session(s):
+            should_delete = True
+        if cutoff is not None and s.get("mtime", now) < cutoff:
+            should_delete = True
+
+        if should_delete:
+            if delete_session(s["file"]):
+                deleted.append(s["filename"])
+
+    return {
+        "deleted": deleted,
+        "kept": total_before - len(deleted),
+        "total_before": total_before,
+    }
 
 
 def delete_session(filepath: str) -> bool:

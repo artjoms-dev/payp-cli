@@ -151,6 +151,8 @@ class ChatSession:
         reg.register(RExecTool())
         reg.register(ShellExecTool())
         reg.register(WebFetchTool())
+        from payp.tools.cleanup import CleanupTool
+        reg.register(CleanupTool())
         return reg
 
     def _build_context(self) -> dict[str, Any]:
@@ -162,6 +164,7 @@ class ChatSession:
             "t1": self.t1,
             "mode": self.mode,
             "skills": self.skills,
+            "chat_session": self,  # so tools can reach self.session_file, etc.
         }
 
     def _display_tool_data(self, tool_name: str, result: Any, sql: str = "") -> None:
@@ -372,6 +375,114 @@ class ChatSession:
             self.console.print(
                 Panel(result.data["stderr"][-500:], title="stderr", border_style="red")
             )
+        return result.data if result.success else {"error": result.error}
+
+    async def _execute_destructive_with_approval(
+        self,
+        tool: BaseTool,
+        args: dict[str, Any],
+        context: dict[str, Any],
+    ) -> Any:
+        """Generic approval flow for any tool with is_destructive=True.
+
+        The tool's `preview()` method describes what WILL happen before the
+        actual call. In YOLO mode the preview is skipped. In all other modes
+        the user sees the preview and must confirm with y/N.
+
+        This wrapper fires for destructive tools that DO NOT have a more
+        specialized handler (execute_sql, execute_python, etc.).
+        """
+        from rich.panel import Panel
+        from rich.text import Text
+
+        tool_name = tool.name
+
+        # YOLO → run directly
+        if self.mode == SecurityMode.YOLO:
+            display_tool_call(self.console, tool_name, args)
+            result = await tool.call(args, context)
+            display_tool_result(self.console, tool_name, result.success, result.summary)
+            return result.data if result.success else {"error": result.error}
+
+        # Build a preview
+        try:
+            preview = await tool.preview(args, context)
+        except Exception as e:
+            preview = {"summary": f"Preview failed: {e}", "items": [], "warning": None}
+
+        if preview is None:
+            # No preview — build a generic one from args
+            preview = {
+                "summary": f"{tool_name} would run with args: "
+                           + ", ".join(f"{k}={v}" for k, v in args.items() if k != "reason"),
+                "items": [],
+                "warning": None,
+            }
+
+        # If preview says nothing matches, short-circuit
+        if preview.get("total", None) == 0 or (
+            "total" not in preview and not preview.get("items") and "Would remove 0" in (preview.get("summary") or "")
+        ):
+            display_tool_call(self.console, tool_name, args)
+            self.console.print(f"  [dim]{preview.get('summary', 'Nothing to do.')}[/dim]")
+            return {"deleted": [], "summary": preview.get("summary", "nothing to do")}
+
+        # Render preview panel
+        body_lines: list[str] = []
+        reason = args.get("reason") or ""
+        if reason:
+            body_lines.append(f"[bold]Why:[/bold] {reason}")
+            body_lines.append("")
+        body_lines.append(f"[bold]{preview.get('summary', '(no summary)')}[/bold]")
+
+        items = preview.get("items") or []
+        if items:
+            body_lines.append("")
+            for it in items:
+                body_lines.append(f"  • {it}")
+            if preview.get("truncated"):
+                total = preview.get("total", len(items))
+                body_lines.append(f"  [dim]... +{total - len(items)} more[/dim]")
+
+        warning = preview.get("warning")
+        if warning:
+            body_lines.append("")
+            body_lines.append(f"[yellow]⚠ {warning}[/yellow]")
+
+        body = Text.from_markup("\n".join(body_lines))
+
+        self.console.print(
+            Panel(
+                body,
+                title=f"[bold]{tool_name}[/bold] — approval required",
+                subtitle=f"Mode: {self.mode.value}",
+                border_style="yellow",
+            )
+        )
+
+        # Ask y/N via prompt_toolkit (async — we're inside the event loop)
+        from prompt_toolkit import PromptSession
+
+        watcher = getattr(self, "_watcher", None)
+        if watcher:
+            watcher.pause()
+        try:
+            session: PromptSession = PromptSession()  # type: ignore[type-arg]
+            answer = (await session.prompt_async("  Execute? [y/N] ")).strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            answer = ""
+        finally:
+            if watcher:
+                watcher.resume()
+
+        if answer not in ("y", "yes"):
+            self.console.print("  [dim]Cancelled[/dim]")
+            return {"error": f"User cancelled {tool_name}", "cancelled": True}
+
+        # Execute
+        display_tool_call(self.console, tool_name, args)
+        result = await tool.call(args, context)
+        display_tool_result(self.console, tool_name, result.success, result.summary)
         return result.data if result.success else {"error": result.error}
 
     async def _execute_sql_with_mode(
@@ -714,6 +825,12 @@ class ChatSession:
                     elif tc.name in ("execute_python", "execute_r", "execute_shell"):
                         tool_response = await self._execute_code_with_approval(
                             tool, tc.arguments, context, tc.name
+                        )
+                    elif getattr(tool, "is_destructive", False):
+                        # Any other destructive tool (cleanup, delete_snapshot,
+                        # delete_query, ...) → universal preview + approval.
+                        tool_response = await self._execute_destructive_with_approval(
+                            tool, tc.arguments, context
                         )
                     else:
                         display_tool_call(self.console, tc.name, tc.arguments)

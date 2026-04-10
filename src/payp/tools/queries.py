@@ -155,6 +155,7 @@ class DeleteQueryTool(BaseTool):
     name = "delete_query"
     description = "Delete a saved query by name."
     is_read_only = False
+    is_destructive = True
 
     def get_parameters_schema(self) -> dict[str, Any]:
         return {
@@ -163,6 +164,28 @@ class DeleteQueryTool(BaseTool):
                 "name": {"type": "string", "description": "Name of the saved query"},
             },
             "required": ["name"],
+        }
+
+    async def preview(
+        self, args: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        name = (args.get("name") or "").strip()
+        if not name:
+            return {"summary": "No query name provided.", "items": [], "total": 0}
+        q = get_query(name)
+        if q is None:
+            return {
+                "summary": f"Query '{name}' not found — nothing to delete.",
+                "items": [],
+                "total": 0,
+            }
+        return {
+            "summary": f"Would delete 1 saved query: {name}",
+            "items": [
+                f"{name} — {q.get('description', '')}".strip(" —"),
+            ],
+            "total": 1,
+            "warning": "Deleted queries cannot be recovered.",
         }
 
     async def call(self, args: dict[str, Any], context: dict[str, Any]) -> ToolResult:

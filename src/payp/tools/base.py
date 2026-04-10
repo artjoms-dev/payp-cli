@@ -41,6 +41,24 @@ class BaseTool(ABC):
         """Execute the tool with given arguments."""
         ...
 
+    async def preview(
+        self, args: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Describe what this tool WOULD do without executing it.
+
+        Return None if the tool has no meaningful preview (generic handler
+        will fall back to a plain args dump). Destructive tools should
+        override this to return a dict like::
+
+            {"summary": "Would remove 12 sessions",
+             "items": ["2026-04-10_no-db_f7e6.jsonl", ...],
+             "warning": "This cannot be undone."}
+
+        The chat approval wrapper uses this to show the user exactly what
+        will happen before calling `.call()`.
+        """
+        return None
+
     def to_definition(self) -> ToolDefinition:
         """Convert to ToolDefinition for LLM."""
         return ToolDefinition(

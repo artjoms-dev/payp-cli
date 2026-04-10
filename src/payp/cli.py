@@ -201,13 +201,27 @@ def _show_welcome() -> None:
 
     render_compact_hint(console)
 
-    # Legacy knowledge dir notice (one-line, opt-in migration)
-    from payp.storage.knowledge import has_legacy_knowledge
+    # Legacy knowledge dir notice — wording depends on whether migration
+    # has already happened. If global has data, the legacy dir is just dead
+    # weight and the message is softer.
+    from payp.storage.knowledge import (
+        get_knowledge_dir,
+        has_legacy_knowledge,
+        list_knowledge_files,
+    )
     if has_legacy_knowledge():
-        console.print(
-            "[yellow]⚠[/yellow] Found legacy [dim]./payp/knowledge/[/dim] — "
-            "knowledge is now global. Run [bold]/knowledge migrate-legacy[/bold] to move it."
-        )
+        global_populated = bool(list_knowledge_files()) if get_knowledge_dir().exists() else False
+        if global_populated:
+            console.print(
+                "[dim]ℹ Legacy [/dim][dim]./payp/knowledge/[/dim][dim] still on disk "
+                "(already migrated). Ask me to clean it up or run "
+                "[/dim][dim]/knowledge migrate-legacy[/dim][dim] again.[/dim]"
+            )
+        else:
+            console.print(
+                "[yellow]⚠[/yellow] Found legacy [dim]./payp/knowledge/[/dim] — "
+                "knowledge is now global. Run [bold]/knowledge migrate-legacy[/bold] to move it."
+            )
 
 
 def _slash_completer():
@@ -379,7 +393,7 @@ def _handle_command(cmd: str) -> None:
         "/knowledge": lambda: _cmd_knowledge(args),
         "/memory": lambda: _cmd_memory(args),
         "/queries": lambda: _cmd_queries(args),
-        "/resume": _cmd_resume,
+        "/resume": lambda: _cmd_resume(args),
         "/history": lambda: _cmd_history(args),
         "/compact": _cmd_compact,
         "/context": _cmd_context,
@@ -1374,11 +1388,19 @@ def _cmd_export(args: str) -> None:
     )
 
 
-def _cmd_resume() -> None:
-    """Resume a previous conversation session."""
-    from datetime import datetime, timezone
+def _cmd_resume(args: str = "") -> None:
+    """Resume a previous conversation session or clean up old ones.
+
+    Usage:
+      /resume                            browse & resume interactively
+      /resume clean                      remove empty sessions (default)
+      /resume clean --keep 20            remove empty + keep only 20 newest
+      /resume clean --older-than 7d      also remove sessions older than 7 days
+      /resume clean --all                remove ALL sessions except current
+    """
     from payp.storage.sessions import (
         build_chat_messages_from_session,
+        clean_sessions,
         delete_session,
         list_sessions,
         read_session,
@@ -1386,12 +1408,80 @@ def _cmd_resume() -> None:
     from payp.ui.selector import SelectorAction, SelectorItem, interactive_select
     from payp.ui.theme import Color, PTColor
 
+    parts = args.strip().split() if args.strip() else []
+    subcommand = parts[0].lower() if parts else ""
+
+    # ─── /resume clean [flags] ───
+    if subcommand == "clean":
+        empty_only = True
+        keep_last: int | None = None
+        older_than_days: int | None = None
+
+        i = 1
+        while i < len(parts):
+            tok = parts[i]
+            if tok == "--all":
+                empty_only = False
+                keep_last = 1  # keep only the most recent
+                older_than_days = 0  # and delete everything
+                i += 1
+            elif tok == "--empty":
+                empty_only = True
+                i += 1
+            elif tok == "--keep" and i + 1 < len(parts):
+                try:
+                    keep_last = int(parts[i + 1])
+                except ValueError:
+                    console.print(f"[red]Invalid --keep value: {parts[i + 1]}[/red]")
+                    return
+                i += 2
+            elif tok == "--older-than" and i + 1 < len(parts):
+                val = parts[i + 1]
+                try:
+                    older_than_days = int(val.rstrip("d"))
+                except ValueError:
+                    console.print(f"[red]Invalid --older-than value: {val}[/red]")
+                    return
+                i += 2
+            else:
+                console.print(f"[red]Unknown flag: {tok}[/red]")
+                return
+
+        # Protect the current session file if chat is active
+        current_file: str | None = None
+        chat = _state.get("chat_session")
+        if chat and getattr(chat, "session_file", None):
+            current_file = str(chat.session_file)
+
+        result = clean_sessions(
+            empty=empty_only,
+            older_than_days=older_than_days,
+            keep_last=keep_last,
+            keep_current=current_file,
+        )
+
+        n = len(result["deleted"])
+        if n == 0:
+            console.print("[dim]Nothing to clean.[/dim]")
+            return
+
+        console.print(
+            f"[green]✓[/green] Removed [bold]{n}[/bold] session(s) "
+            f"[dim]({result['kept']} kept, {result['total_before']} before)[/dim]"
+        )
+        # Show first few deleted filenames for visibility
+        for fn in result["deleted"][:5]:
+            console.print(f"  [dim]- {fn}[/dim]")
+        if n > 5:
+            console.print(f"  [dim]  ... +{n - 5} more[/dim]")
+        return
+
+    # ─── default: interactive browser ───
     sessions = list_sessions()
     if not sessions:
         console.print("[dim]No sessions to resume.[/dim]")
         return
 
-    # Build selector items
     items = []
     for s in sessions:
         summary = read_session(s["file"])
@@ -1406,12 +1496,17 @@ def _cmd_resume() -> None:
             description=desc,
         ))
 
+    # Collect delete outcomes — do NOT print inside the callback (stdout
+    # writes during prompt_toolkit render corrupt the frame). Same fix as
+    # /knowledge.
+    deleted_files: list[str] = []
+
     def _delete(item: SelectorItem) -> bool:
         s = item.value["session"]
-        deleted = delete_session(s["file"])
-        if deleted:
-            console.print(f"  [red]Deleted[/red] {s['filename']}")
-        return deleted
+        if delete_session(s["file"]):
+            deleted_files.append(s["filename"])
+            return True
+        return False
 
     result = interactive_select(
         console=console,
@@ -1420,6 +1515,10 @@ def _cmd_resume() -> None:
         visible=5,
         actions=[SelectorAction(key="d", label="delete", callback=_delete)],
     )
+
+    # Report deletions after the selector tears down its display
+    for fn in deleted_files:
+        console.print(f"  [red]Deleted[/red] {fn}")
 
     if result.action != "select" or not result.item:
         return
@@ -2411,6 +2510,7 @@ def _cmd_help() -> None:
         ]),
         ("Session", [
             ("/resume", "continue a previous session"),
+            ("/resume clean", "purge empty sessions (also --keep N / --older-than Nd / --all)"),
             ("/context", "show context window usage"),
             ("/compact", "compress older messages"),
             ("/more", "next 20 rows of last SELECT"),
