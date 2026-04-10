@@ -6,7 +6,7 @@ Assembles 8 sections based on current state:
 3. Security Mode (dynamic — based on current /mode)
 4. Connection Context (dynamic — injected on connect)
 5. Schema Context (dynamic — T0+T1 always, T2 per query)
-6. Knowledge Base (dynamic — from ./payp/knowledge/)
+6. Knowledge Base (dynamic — via active memory backend, global by default)
 7. Tool Descriptions (dynamic — based on available tools)
 8. Error Recovery (static)
 """

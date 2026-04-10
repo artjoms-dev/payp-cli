@@ -58,15 +58,26 @@ def _get_loop() -> asyncio.AbstractEventLoop:
 
 
 def _run_async(coro: Any) -> Any:
-    """Run an async coroutine on the persistent session loop."""
-    loop = _get_loop()
-    if loop.is_running():
-        # Called from within an async context — shouldn't happen in our CLI flow,
-        # but fall back to a thread executor with a fresh loop just in case.
+    """Run an async coroutine from sync code.
+
+    Detects ANY currently-running loop in this thread (prompt_toolkit, click,
+    etc.) — not just our persistent loop — and falls back to a worker thread
+    when needed. This avoids "Cannot run the event loop while another loop is
+    running" inside interactive selectors.
+    """
+    try:
+        asyncio.get_running_loop()
+        # We're inside some other loop (e.g. prompt_toolkit inside a selector
+        # callback). Execute the coroutine on a dedicated worker thread so it
+        # gets its own fresh event loop.
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as pool:
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(asyncio.run, coro).result()
-    return loop.run_until_complete(coro)
+    except RuntimeError:
+        # No running loop in this thread — use our persistent loop.
+        loop = _get_loop()
+        return loop.run_until_complete(coro)
 
 
 app = typer.Typer(
@@ -189,6 +200,14 @@ def _show_welcome() -> None:
     )
 
     render_compact_hint(console)
+
+    # Legacy knowledge dir notice (one-line, opt-in migration)
+    from payp.storage.knowledge import has_legacy_knowledge
+    if has_legacy_knowledge():
+        console.print(
+            "[yellow]⚠[/yellow] Found legacy [dim]./payp/knowledge/[/dim] — "
+            "knowledge is now global. Run [bold]/knowledge migrate-legacy[/bold] to move it."
+        )
 
 
 def _slash_completer():
@@ -357,7 +376,7 @@ def _handle_command(cmd: str) -> None:
         "/snapshots": _cmd_snapshots,
         "/rollback": _cmd_rollback,
         "/diff": lambda: _cmd_diff(args),
-        "/knowledge": _cmd_knowledge,
+        "/knowledge": lambda: _cmd_knowledge(args),
         "/memory": lambda: _cmd_memory(args),
         "/queries": lambda: _cmd_queries(args),
         "/resume": _cmd_resume,
@@ -1514,45 +1533,172 @@ def _cmd_queries(args: str) -> None:
         )
 
 
-def _cmd_knowledge() -> None:
-    """Browse knowledge base files (per-connection, per-table)."""
+def _cmd_knowledge(args: str = "") -> None:
+    """Browse / export / import the knowledge base.
+
+    Usage:
+      /knowledge                       — interactive browser
+      /knowledge export [connection] [path]   — dump to markdown files
+      /knowledge import [path] [connection]   — read markdown files in
+      /knowledge migrate-legacy        — move ./payp/knowledge → ~/.payp/knowledge
+    """
     from pathlib import Path
 
-    from payp.storage.knowledge import list_knowledge_files
+    from payp.memory.manager import (
+        export_knowledge,
+        get_memory_backend,
+        import_knowledge,
+    )
+    from payp.storage.knowledge import (
+        has_legacy_knowledge,
+        migrate_legacy_to_global,
+    )
     from payp.ui.selector import SelectorAction, SelectorItem, interactive_select
     from payp.ui.theme import Color, PTColor
 
-    files = list_knowledge_files()
-    if not files:
+    parts = args.strip().split() if args.strip() else []
+    subcommand = parts[0].lower() if parts else ""
+
+    # ─── /knowledge export [connection] [path] ───
+    if subcommand == "export":
+        conn_arg = parts[1] if len(parts) > 1 else None
+        # Treat a path-like arg as path, not connection
+        path_arg = None
+        if conn_arg and ("/" in conn_arg or conn_arg.startswith(".") or conn_arg.startswith("~")):
+            path_arg = conn_arg
+            conn_arg = None
+        if len(parts) > 2:
+            path_arg = parts[2]
+        target = path_arg or "./payp/knowledge"
+        try:
+            result = _run_async(export_knowledge(target, connection=conn_arg))
+        except Exception as e:
+            console.print(f"[red]Export failed: {e}[/red]")
+            return
+        target_abs = Path(result["target"])
         console.print(
-            "[dim]No knowledge files yet.[/dim]\n"
-            "[dim]Knowledge is built automatically as you work with tables.[/dim]\n"
-            "[dim]Or create manually: ./payp/knowledge/{connection}/tables/{table}.md[/dim]"
+            f"[green]✓[/green] Exported [bold]{result['exported']}[/bold] "
+            f"table(s) from [cyan]{result['backend']}[/cyan]"
+        )
+        console.print(f"  [dim]Location:[/dim] {target_abs}")
+        if result["exported"]:
+            # Show files written
+            for fp in result["files"][:5]:
+                try:
+                    rel = Path(fp).relative_to(target_abs)
+                except ValueError:
+                    rel = Path(fp)
+                console.print(f"    [dim]- {rel}[/dim]")
+            if len(result["files"]) > 5:
+                console.print(f"    [dim]  ... +{len(result['files']) - 5} more[/dim]")
+
+            # Figure out a usable git-add command
+            try:
+                rel_to_cwd = target_abs.relative_to(Path.cwd())
+                git_add = f"git add {rel_to_cwd}"
+            except ValueError:
+                git_add = f"git add {target_abs}"
+            console.print(
+                f"  [dim]Commit & share:[/dim] [dim]{git_add} "
+                f"&& git commit -m 'share db knowledge'[/dim]"
+            )
+        return
+
+    # ─── /knowledge import [path] [connection] ───
+    if subcommand == "import":
+        path_arg = parts[1] if len(parts) > 1 else "./payp/knowledge"
+        conn_arg = parts[2] if len(parts) > 2 else None
+        try:
+            result = _run_async(import_knowledge(path_arg, connection=conn_arg))
+        except Exception as e:
+            console.print(f"[red]Import failed: {e}[/red]")
+            return
+        msg = (
+            f"[green]✓[/green] Imported [bold]{result['imported']}[/bold] "
+            f"table(s) into [cyan]{result['backend']}[/cyan]"
+        )
+        if result.get("replaced"):
+            msg += f" [dim]({result['replaced']} replaced)[/dim]"
+        console.print(msg)
+        if result["errors"]:
+            console.print(f"[yellow]{len(result['errors'])} error(s):[/yellow]")
+            for err in result["errors"][:5]:
+                console.print(f"  [dim]- {err}[/dim]")
+        return
+
+    # ─── /knowledge migrate-legacy ───
+    if subcommand in ("migrate-legacy", "migrate"):
+        if not has_legacy_knowledge():
+            console.print("[dim]No legacy ./payp/knowledge/ to migrate.[/dim]")
+            return
+        result = migrate_legacy_to_global()
+        console.print(
+            f"[green]✓[/green] Moved [bold]{result['migrated']}[/bold] file(s) "
+            f"from [dim]{result['src']}[/dim] → [dim]{result['dst']}[/dim]"
+        )
+        if result.get("skipped"):
+            console.print(
+                f"[yellow]{result['skipped']}[/yellow] file(s) already existed "
+                "in global — merged with a separator marker."
+            )
+        console.print(
+            "[dim]Safe to [bold]rm -rf ./payp/knowledge[/bold] now if you want.[/dim]"
+        )
+        return
+
+    # ─── default: interactive browser ───
+    backend = get_memory_backend()
+    backend_name = backend.name
+
+    try:
+        entries = _run_async(backend.list_all())
+    except Exception as e:
+        console.print(f"[red]Failed to list knowledge: {e}[/red]")
+        return
+
+    if not entries:
+        console.print(
+            f"[dim]No knowledge entries yet. (backend: {backend_name})[/dim]\n"
+            "[dim]Knowledge is saved via propose_knowledge after user approval.[/dim]"
         )
         return
 
     items = []
-    for f in files:
-        conn = f.get("connection", "?")
-        obj_type = f.get("type", "?")
-        name = f.get("name", "?")
-        size = f.get("size", 0)
-        size_str = f"{size / 1024:.1f}KB" if size >= 1024 else f"{size}B"
-        label = f"{conn}/{obj_type}/{name}"
-        desc = size_str
-        items.append(SelectorItem(label=label, value=f, description=desc))
+    for e in entries:
+        conn = e.get("connection", "?")
+        name = e.get("name", "?")
+        obj_type = e.get("type", "?")
+        if obj_type == "mempalace_drawer":
+            drawers = e.get("drawers", 0)
+            desc = f"{drawers} drawer{'s' if drawers != 1 else ''}"
+            label = f"{conn}/{name}"
+        else:
+            size = e.get("size", 0)
+            desc = f"{size / 1024:.1f}KB" if size >= 1024 else f"{size}B"
+            label = f"{conn}/{obj_type}/{name}"
+        items.append(SelectorItem(label=label, value=e, description=desc))
+
+    # Collect delete outcomes — do NOT print inside the callback (that writes
+    # to stdout while prompt_toolkit is rendering and corrupts the frame).
+    deleted: list[tuple[str, str]] = []
+    failed: list[tuple[str, str, str]] = []
 
     def _delete(item: SelectorItem) -> bool:
-        fi = item.value
-        p = Path(fi["file"])
-        if p.exists():
-            p.unlink()
-            console.print(f"  [red]Deleted[/red] {fi['name']}")
+        ei = item.value
+        conn = ei.get("connection", "")
+        table = ei.get("name", "")
+        try:
+            ok = _run_async(backend.delete(conn, table))
+        except Exception as exc:
+            failed.append((conn, table, str(exc)))
+            return False
+        if ok:
+            deleted.append((conn, table))
             return True
         return False
 
     kb_title: list[tuple[str, str]] = [
-        (PTColor.BRAND, f"Knowledge Base ({len(items)} files)"),
+        (PTColor.BRAND, f"Knowledge Base ({len(items)} entries) — backend: {backend_name}"),
     ]
     result = interactive_select(
         console=console,
@@ -1562,20 +1708,29 @@ def _cmd_knowledge() -> None:
         actions=[SelectorAction(key="d", label="delete", callback=_delete)],
     )
 
+    # Report deletions now that the selector has torn down its display
+    for conn, table in deleted:
+        console.print(f"  [red]Deleted[/red] {conn}/{table}")
+    for conn, table, err in failed:
+        console.print(f"  [red]Delete failed[/red] {conn}/{table}: [dim]{err}[/dim]")
+
     if result.action == "select" and result.item:
-        fi = result.item.value
-        p = Path(fi["file"])
+        ei = result.item.value
+        conn = ei.get("connection", "")
+        table = ei.get("name", "")
         try:
-            content = p.read_text(encoding="utf-8")
-        except Exception:
-            content = None
+            content = _run_async(backend.read(conn, table))
+        except Exception as ex:
+            console.print(f"[red]Read failed: {ex}[/red]")
+            return
         if content:
             from rich.markdown import Markdown
             from rich.panel import Panel
+            subtitle = ei.get("file") or f"{backend_name}://{conn}/{table}"
             console.print(Panel(
                 Markdown(content),
-                title=f"[{Color.BRAND_ALT}]{fi.get('connection', '')}/{fi.get('name', '')}[/{Color.BRAND_ALT}]",
-                subtitle=str(p),
+                title=f"[{Color.BRAND_ALT}]{conn}/{table}[/{Color.BRAND_ALT}]",
+                subtitle=str(subtitle),
                 border_style="rgb(168,0,111)",
             ))
 
@@ -2244,7 +2399,9 @@ def _cmd_help() -> None:
             ("/schema", "explore schema"),
             ("/schema <table>", "show table DDL"),
             ("/stats <table>", "column statistics & data profile"),
-            ("/knowledge", "business context & notes"),
+            ("/knowledge", "browse business context & notes"),
+            ("/knowledge export [conn] [path]", "dump knowledge to .md for sharing"),
+            ("/knowledge import [path]", "load shared .md files into backend"),
             ("/memory", "manage knowledge backend"),
             ("/queries", "saved SQL library"),
             ("/snapshots", "manage backups (↑↓ d Enter)"),

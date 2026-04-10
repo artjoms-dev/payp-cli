@@ -1,7 +1,7 @@
 """NativeMemoryBackend — wraps storage/knowledge.py markdown files.
 
 This is the default backend. Knowledge is stored as per-table .md files
-under ./payp/knowledge/{connection}/tables/{table}.md.
+under ~/.payp/knowledge/{connection}/tables/{table}.md (GLOBAL).
 """
 
 from __future__ import annotations
@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 from payp.storage.knowledge import (
-    KNOWLEDGE_DIR,
     append_table_knowledge,
+    get_knowledge_dir,
     list_knowledge_files,
     list_table_knowledge,
     load_knowledge_for_tables,

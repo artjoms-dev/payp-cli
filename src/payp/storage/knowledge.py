@@ -1,7 +1,12 @@
 """Knowledge base — per-connection, per-table business context.
 
-Structure:
-  ./payp/knowledge/
+Storage is GLOBAL by default (~/.payp/knowledge/) because knowledge is
+bound to the *database*, not the project directory. Team sharing happens
+via explicit /knowledge export → git-commit workflow, not by writing into
+the project folder at runtime.
+
+Structure (global):
+  ~/.payp/knowledge/
   ├── {connection-name}/
   │   ├── tables/
   │   │   ├── customers.md
@@ -19,8 +24,27 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from payp.config import global_dir
 
-KNOWLEDGE_DIR = Path("./payp/knowledge")
+
+def _knowledge_root() -> Path:
+    """Always global: ~/.payp/knowledge/"""
+    return global_dir() / "knowledge"
+
+
+LEGACY_KNOWLEDGE_DIR = Path("./payp/knowledge")
+KNOWLEDGE_DIR = _knowledge_root()
+
+
+def has_legacy_knowledge() -> bool:
+    """True if an old project-local ./payp/knowledge/ exists (pre-refactor)."""
+    if not LEGACY_KNOWLEDGE_DIR.exists():
+        return False
+    # Ignore empty/hidden-only dirs
+    for p in LEGACY_KNOWLEDGE_DIR.rglob("*.md"):
+        if p.is_file():
+            return True
+    return False
 
 # Object type subdirectories
 OBJECT_TYPES = ("tables", "views", "procedures")
@@ -61,17 +85,18 @@ TABLE_TEMPLATE = """# {schema}.{table}
 
 
 def get_knowledge_dir() -> Path:
-    return KNOWLEDGE_DIR
+    return _knowledge_root()
 
 
-def get_connection_dir(connection_name: str) -> Path:
+def get_connection_dir(connection_name: str, root: Path | None = None) -> Path:
     """Return the knowledge dir for a specific connection."""
-    return KNOWLEDGE_DIR / _safe_name(connection_name)
+    base = root if root is not None else _knowledge_root()
+    return base / _safe_name(connection_name)
 
 
-def ensure_connection_dir(connection_name: str) -> Path:
+def ensure_connection_dir(connection_name: str, root: Path | None = None) -> Path:
     """Create the connection's knowledge directory structure."""
-    base = get_connection_dir(connection_name)
+    base = get_connection_dir(connection_name, root=root)
     for subdir in OBJECT_TYPES:
         (base / subdir).mkdir(parents=True, exist_ok=True)
     return base
@@ -85,10 +110,15 @@ def _safe_name(name: str) -> str:
 # ─── Per-table knowledge ───
 
 
-def table_knowledge_path(connection_name: str, table_name: str, obj_type: str = "tables") -> Path:
+def table_knowledge_path(
+    connection_name: str,
+    table_name: str,
+    obj_type: str = "tables",
+    root: Path | None = None,
+) -> Path:
     """Return the path for a table/view/procedure knowledge file."""
     safe_table = _safe_name(table_name.lower())
-    return get_connection_dir(connection_name) / obj_type / f"{safe_table}.md"
+    return get_connection_dir(connection_name, root=root) / obj_type / f"{safe_table}.md"
 
 
 def read_table_knowledge(connection_name: str, table_name: str, obj_type: str = "tables") -> str | None:
@@ -102,18 +132,30 @@ def read_table_knowledge(connection_name: str, table_name: str, obj_type: str = 
         return None
 
 
-def write_table_knowledge(connection_name: str, table_name: str, content: str, obj_type: str = "tables") -> Path:
+def write_table_knowledge(
+    connection_name: str,
+    table_name: str,
+    content: str,
+    obj_type: str = "tables",
+    root: Path | None = None,
+) -> Path:
     """Write/overwrite knowledge for a specific table."""
-    ensure_connection_dir(connection_name)
-    path = table_knowledge_path(connection_name, table_name, obj_type)
+    ensure_connection_dir(connection_name, root=root)
+    path = table_knowledge_path(connection_name, table_name, obj_type, root=root)
     path.write_text(content, encoding="utf-8")
     return path
 
 
-def append_table_knowledge(connection_name: str, table_name: str, content: str, obj_type: str = "tables") -> Path:
+def append_table_knowledge(
+    connection_name: str,
+    table_name: str,
+    content: str,
+    obj_type: str = "tables",
+    root: Path | None = None,
+) -> Path:
     """Append new knowledge to an existing table file (or create it)."""
-    ensure_connection_dir(connection_name)
-    path = table_knowledge_path(connection_name, table_name, obj_type)
+    ensure_connection_dir(connection_name, root=root)
+    path = table_knowledge_path(connection_name, table_name, obj_type, root=root)
     if path.exists():
         existing = path.read_text(encoding="utf-8").rstrip()
         path.write_text(existing + "\n\n" + content.strip() + "\n", encoding="utf-8")
@@ -122,9 +164,11 @@ def append_table_knowledge(connection_name: str, table_name: str, content: str, 
     return path
 
 
-def list_table_knowledge(connection_name: str) -> list[dict[str, Any]]:
+def list_table_knowledge(
+    connection_name: str, root: Path | None = None
+) -> list[dict[str, Any]]:
     """List all knowledge files for a connection."""
-    base = get_connection_dir(connection_name)
+    base = get_connection_dir(connection_name, root=root)
     if not base.exists():
         return []
     files = []
@@ -183,18 +227,17 @@ def load_overview(connection_name: str) -> str | None:
 # ─── Backward compatibility with old flat format ───
 
 
-def list_knowledge_files() -> list[dict[str, Any]]:
+def list_knowledge_files(root: Path | None = None) -> list[dict[str, Any]]:
     """List ALL knowledge files across ALL connections (for /knowledge command)."""
-    if not KNOWLEDGE_DIR.exists():
+    base = root if root is not None else _knowledge_root()
+    if not base.exists():
         return []
     all_files = []
-    # New per-connection structure
-    for conn_dir in sorted(KNOWLEDGE_DIR.iterdir()):
+    for conn_dir in sorted(base.iterdir()):
         if conn_dir.is_dir() and not conn_dir.name.startswith("."):
             conn_name = conn_dir.name
-            all_files.extend(list_table_knowledge(conn_name))
-    # Also include any root-level .md files (shared.md, legacy files)
-    for f in sorted(KNOWLEDGE_DIR.glob("*.md")):
+            all_files.extend(list_table_knowledge(conn_name, root=base))
+    for f in sorted(base.glob("*.md")):
         all_files.append({
             "file": str(f),
             "name": f.stem,
@@ -243,6 +286,47 @@ def delete_knowledge_file(name: str) -> bool:
 
 
 def total_knowledge_size() -> int:
-    if not KNOWLEDGE_DIR.exists():
+    root = _knowledge_root()
+    if not root.exists():
         return 0
-    return sum(f.stat().st_size for f in KNOWLEDGE_DIR.rglob("*.md"))
+    return sum(f.stat().st_size for f in root.rglob("*.md"))
+
+
+# ─── Legacy migration ───
+
+
+def migrate_legacy_to_global() -> dict[str, Any]:
+    """One-shot move ./payp/knowledge/ → ~/.payp/knowledge/.
+
+    Merges connection-by-connection; existing global files are kept (legacy
+    is appended with a separator marker).
+    """
+    if not has_legacy_knowledge():
+        return {"migrated": 0, "skipped": 0, "note": "no legacy dir"}
+
+    src = LEGACY_KNOWLEDGE_DIR
+    dst = _knowledge_root()
+    dst.mkdir(parents=True, exist_ok=True)
+
+    migrated = 0
+    skipped = 0
+    for md in src.rglob("*.md"):
+        rel = md.relative_to(src)
+        target = dst / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            existing = target.read_text(encoding="utf-8").rstrip()
+            legacy_content = md.read_text(encoding="utf-8").strip()
+            merged = (
+                existing
+                + "\n\n<!-- merged from legacy ./payp/knowledge -->\n"
+                + legacy_content
+                + "\n"
+            )
+            target.write_text(merged, encoding="utf-8")
+            skipped += 1
+        else:
+            target.write_text(md.read_text(encoding="utf-8"), encoding="utf-8")
+            migrated += 1
+
+    return {"migrated": migrated, "skipped": skipped, "src": str(src), "dst": str(dst)}
