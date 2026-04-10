@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 import oracledb
@@ -129,6 +130,41 @@ class OracleDriver:
                 rows = await cur.fetchall()
                 return [dict(zip(col_names, r)) for r in rows]
             return []
+        finally:
+            cur.close()
+
+    async def stream_raw(
+        self,
+        sql: str,
+        params: tuple | list | None = None,
+        batch_size: int = 10_000,
+    ) -> AsyncIterator[list[dict[str, Any]]]:
+        """Stream rows from python-oracledb async cursor using arraysize.
+
+        Unlike PG/MySQL there is no dedicated server-side cursor flag —
+        oracledb already streams transparently and `arraysize` controls the
+        fetch buffer size. Setting it to `batch_size` aligns network
+        round-trips with our yield granularity.
+        """
+        if not self.is_connected:
+            raise ConnectionError("Not connected")
+        assert self._conn is not None
+
+        sql_t, binds = _translate_params(sql, params)
+        sql_t = sql_t.rstrip().rstrip(";")
+
+        cur = self._conn.cursor()
+        try:
+            cur.arraysize = batch_size
+            await cur.execute(sql_t, binds)
+            if not cur.description:
+                return
+            col_names = [d[0].lower() for d in cur.description]
+            while True:
+                rows = await cur.fetchmany(batch_size)
+                if not rows:
+                    break
+                yield [dict(zip(col_names, r)) for r in rows]
         finally:
             cur.close()
 

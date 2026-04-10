@@ -7,6 +7,7 @@ psycopg3-flavoured API used by the rest of payp.
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 import aiomysql
@@ -103,6 +104,33 @@ class MySQLDriver:
                 # but system catalog queries return uppercase).
                 return [{k.lower(): v for k, v in r.items()} for r in rows]
             return []
+
+    async def stream_raw(
+        self,
+        sql: str,
+        params: tuple | None = None,
+        batch_size: int = 10_000,
+    ) -> AsyncIterator[list[dict[str, Any]]]:
+        """Stream rows via aiomysql server-side cursor (SSDictCursor).
+
+        NOTE: SSDictCursor is bound to the underlying socket — a mid-stream
+        connection drop kills the cursor and the caller sees the error. This
+        path deliberately bypasses the auto-reconnect wrapper in
+        ConnectionManager because a retry would re-run the query from scratch
+        and could produce inconsistent results.
+        """
+        if not self.is_connected:
+            raise ConnectionError("Not connected")
+        assert self._conn is not None
+        async with self._conn.cursor(aiomysql.SSDictCursor) as cur:
+            await cur.execute(sql, params)
+            if not cur.description:
+                return
+            while True:
+                rows = await cur.fetchmany(batch_size)
+                if not rows:
+                    break
+                yield [{k.lower(): v for k, v in r.items()} for r in rows]
 
     async def execute(self, sql: str, limit: int = 20) -> QueryResult:
         if not self.is_connected:

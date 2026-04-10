@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 import psycopg
@@ -118,6 +119,44 @@ class _PostgresDriver:
                 return [dict(row) for row in await cur.fetchall()]
             return []
 
+    async def stream_raw(
+        self,
+        sql: str,
+        params: tuple | None = None,
+        batch_size: int = 10_000,
+    ) -> AsyncIterator[list[dict[str, Any]]]:
+        """Stream rows from a server-side named cursor in batches.
+
+        psycopg3 named cursors require an explicit transaction block — they
+        issue `DECLARE CURSOR`, which cannot run under autocommit. We wrap
+        the read in `async with conn.transaction()` for the cursor's
+        lifetime. `itersize` controls network fetch size so each yielded
+        batch matches one server round-trip.
+
+        Trade-off: this holds a transaction open for the full export. On a
+        busy OLTP database a slow reader will block VACUUM on the touched
+        tables. Acceptable for export workloads; avoid for pub/sub loops.
+        """
+        if not self.is_connected:
+            raise ConnectionError("Not connected")
+        cursor_name = f"payp_stream_{id(self)}_{int(time.time() * 1000)}"
+        async with self._conn.transaction():  # type: ignore[union-attr]
+            async with self._conn.cursor(  # type: ignore[union-attr]
+                name=cursor_name, row_factory=dict_row
+            ) as cur:
+                cur.itersize = batch_size
+                await cur.execute(sql, params)
+                if not cur.description:
+                    return
+                batch: list[dict[str, Any]] = []
+                async for row in cur:
+                    batch.append(dict(row))
+                    if len(batch) >= batch_size:
+                        yield batch
+                        batch = []
+                if batch:
+                    yield batch
+
     async def execute(self, sql: str, limit: int = 20) -> QueryResult:
         if not self.is_connected:
             raise ConnectionError("Not connected")
@@ -205,6 +244,22 @@ class ConnectionManager:
                 if await self._auto_reconnect():
                     return await self._driver.execute_raw(sql, params)
             raise
+
+    async def stream_raw(
+        self,
+        sql: str,
+        params: tuple | None = None,
+        batch_size: int = 10_000,
+    ) -> AsyncIterator[list[dict[str, Any]]]:
+        """Delegate to the driver's streaming cursor.
+
+        Unlike execute_raw, this is NOT wrapped in auto-reconnect: streaming
+        cursors (PG named cursor, MySQL SSDictCursor) are bound to a socket
+        and cannot survive a mid-stream disconnect. A dropped connection
+        during streaming surfaces to the caller.
+        """
+        async for batch in self._driver.stream_raw(sql, params, batch_size):
+            yield batch
 
     async def execute(self, sql: str, limit: int = 20) -> QueryResult:
         try:
