@@ -170,7 +170,7 @@ def _cmd_knowledge(args: str = "") -> None:
 
     scope_label = f" • {active_conn}" if active_conn else " • all"
     kb_title: list[tuple[str, str]] = [
-        (PTColor.BRAND, f"Knowledge Base ({len(items)} entries){scope_label} — backend: {backend_name}"),
+        (PTColor.BRAND, f"Knowledge Base ({len(items)} entries){scope_label} — backend: {backend_name}"),  # noqa: E501
     ]
     result = interactive_select(
         console=console,

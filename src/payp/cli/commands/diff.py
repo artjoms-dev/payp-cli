@@ -127,7 +127,8 @@ def _cmd_diff(args: str) -> None:
     console.print(
         Panel.fit(
             f"[{Color.BRAND}]Comparing {table}[/{Color.BRAND}]: "
-            f"[{Color.BRAND_ALT}]{conn_a}[/{Color.BRAND_ALT}] vs [{Color.BRAND_ALT}]{conn_b}[/{Color.BRAND_ALT}]",
+            f"[{Color.BRAND_ALT}]{conn_a}[/{Color.BRAND_ALT}]"
+            f" vs [{Color.BRAND_ALT}]{conn_b}[/{Color.BRAND_ALT}]",
             border_style="dim",
         )
     )

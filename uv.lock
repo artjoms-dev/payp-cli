@@ -2204,6 +2204,11 @@ mempalace = [
     { name = "mempalace" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiomysql", specifier = ">=0.2.0" },
@@ -2234,6 +2239,9 @@ requires-dist = [
     { name = "types-pymysql", marker = "extra == 'dev'" },
 ]
 provides-extras = ["mempalace", "dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "ruff", specifier = ">=0.15.10" }]
 
 [[package]]
 name = "platformdirs"

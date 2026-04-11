@@ -78,3 +78,8 @@ strict = true
 [[tool.mypy.overrides]]
 module = ["plotille", "aiomysql", "pyarrow.*", "mempalace.*"]
 ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.10",
+]

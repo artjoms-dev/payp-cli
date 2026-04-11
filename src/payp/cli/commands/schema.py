@@ -11,6 +11,7 @@ from payp.cli.state import _state, console
 def _cmd_schema(args: str) -> None:
     """Explore database schema."""
     from rich.panel import Panel
+
     from payp.db.introspection import format_t0_for_context, format_t1_for_context
 
     if not _state.get("active_connection"):
@@ -35,9 +36,13 @@ def _cmd_schema(args: str) -> None:
         return
 
     if t0:
-        console.print(Panel(format_t0_for_context(t0), title="Schema Overview", border_style="rgb(168,0,111)"))
+        console.print(Panel(
+            format_t0_for_context(t0), title="Schema Overview", border_style="rgb(168,0,111)"
+        ))
     if t1:
-        console.print(Panel(format_t1_for_context(t1), title="Tables", border_style="rgb(168,0,111)"))
+        console.print(Panel(
+            format_t1_for_context(t1), title="Tables", border_style="rgb(168,0,111)"
+        ))
 
 
 async def _refresh_schema() -> None:
@@ -61,14 +66,16 @@ async def _refresh_schema() -> None:
     _state["t1"] = t1
 
     console.print(
-        f"[{Color.BRAND_ALT}]Schema cache refreshed. {t0.total_tables} tables, {t0.view_count} views.[/{Color.BRAND_ALT}]"
+        f"[{Color.BRAND_ALT}]Schema cache refreshed."
+        f" {t0.total_tables} tables, {t0.view_count} views.[/{Color.BRAND_ALT}]"
     )
 
 
 async def _show_table_schema(table_name: str) -> None:
     """Show T2 DDL for a specific table."""
-    from payp.db.introspection import discover_t2
     from rich.syntax import Syntax
+
+    from payp.db.introspection import discover_t2
 
     mgr = _state["connection_manager"]
 
@@ -94,7 +101,9 @@ def _cmd_stats(args: str) -> None:
         console.print("[yellow]Connection lost. Run /db to reconnect.[/yellow]")
         return
     if not args.strip():
-        console.print(f"[{Color.BRAND_ALT}]Usage: /stats <table>  (or schema.table)[/{Color.BRAND_ALT}]")
+        console.print(
+            f"[{Color.BRAND_ALT}]Usage: /stats <table>  (or schema.table)[/{Color.BRAND_ALT}]"
+        )
         return
 
     arg = args.strip()
@@ -123,6 +132,7 @@ def _render_stats_table(profile: dict[str, Any]) -> None:
     from rich import box
     from rich.panel import Panel
     from rich.table import Table
+
     from payp.ui.theme import Color
 
     total = profile.get("total_rows", 0)
@@ -131,8 +141,10 @@ def _render_stats_table(profile: dict[str, Any]) -> None:
     header = f"{schema}.{table_name}" if schema else table_name
     console.print(
         Panel(
-            f"[bold]{header}[/bold]   [dim]total rows:[/dim] [{Color.BRAND_ALT}]{total:,}[/{Color.BRAND_ALT}]   "
-            f"[dim]columns:[/dim] [{Color.BRAND_ALT}]{len(profile.get('columns', []))}[/{Color.BRAND_ALT}]",
+            f"[bold]{header}[/bold]   [dim]total rows:[/dim]"
+            f" [{Color.BRAND_ALT}]{total:,}[/{Color.BRAND_ALT}]   "
+            f"[dim]columns:[/dim]"
+            f" [{Color.BRAND_ALT}]{len(profile.get('columns', []))}[/{Color.BRAND_ALT}]",
             border_style="rgb(168,0,111)",
         )
     )

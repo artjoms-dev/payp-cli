@@ -24,10 +24,26 @@ def _cmd_mode(args: str) -> None:
     else:
         current_val = config.default_mode.value
         modes = [
-            SelectorItem(label="manual", value=SecurityMode.MANUAL, description="approve every SQL before execution"),
-            SelectorItem(label="yolo", value=SecurityMode.YOLO, description="auto-execute everything"),
-            SelectorItem(label="secure", value=SecurityMode.SECURE, description="reviewer checks, you decide"),
-            SelectorItem(label="secure-auto", value=SecurityMode.SECURE_AUTO, description="reviewer checks and decides"),
+            SelectorItem(
+                label="manual",
+                value=SecurityMode.MANUAL,
+                description="approve every SQL before execution",
+            ),
+            SelectorItem(
+                label="yolo",
+                value=SecurityMode.YOLO,
+                description="auto-execute everything",
+            ),
+            SelectorItem(
+                label="secure",
+                value=SecurityMode.SECURE,
+                description="reviewer checks, you decide",
+            ),
+            SelectorItem(
+                label="secure-auto",
+                value=SecurityMode.SECURE_AUTO,
+                description="reviewer checks and decides",
+            ),
         ]
         title: list[tuple[str, str]] = [
             (PTColor.BRAND, "Security Mode"),
@@ -49,10 +65,19 @@ def _cmd_mode(args: str) -> None:
     _state["config"] = config
 
     confirmations = {
-        SecurityMode.YOLO: "[bold red]YOLO mode enabled. All queries execute without confirmation.[/bold red]",
-        SecurityMode.SECURE: f"[{Color.BRAND_ALT}]Secure mode. Reviewer will check, you make final decision.[/{Color.BRAND_ALT}]",
-        SecurityMode.SECURE_AUTO: f"[{Color.BRAND_ALT}]Secure-auto mode. Reviewer checks and decides.[/{Color.BRAND_ALT}]",
-        SecurityMode.MANUAL: f"[{Color.BRAND_ALT}]Manual mode. You approve every SQL.[/{Color.BRAND_ALT}]",
+        SecurityMode.YOLO: (
+            "[bold red]YOLO mode enabled. All queries execute without confirmation.[/bold red]"
+        ),
+        SecurityMode.SECURE: (
+            f"[{Color.BRAND_ALT}]Secure mode. Reviewer will check, you make final decision."
+            f"[/{Color.BRAND_ALT}]"
+        ),
+        SecurityMode.SECURE_AUTO: (
+            f"[{Color.BRAND_ALT}]Secure-auto mode. Reviewer checks and decides.[/{Color.BRAND_ALT}]"
+        ),
+        SecurityMode.MANUAL: (
+            f"[{Color.BRAND_ALT}]Manual mode. You approve every SQL.[/{Color.BRAND_ALT}]"
+        ),
     }
     console.print(confirmations[new_mode])
     _ensure_chat_session()  # Refresh with new mode

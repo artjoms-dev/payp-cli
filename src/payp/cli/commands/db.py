@@ -11,9 +11,9 @@ from payp.cli.state import _state, console
 
 def _cmd_db(args: str) -> None:
     """Manage database connections."""
-    from payp.config import list_connections, load_connection_profile, load_credential
-    from payp.models import DbType
     from rich.table import Table
+
+    from payp.config import list_connections, load_connection_profile, load_credential
     from payp.ui.theme import Color
 
     connections = list_connections()
@@ -59,7 +59,8 @@ def _cmd_db(args: str) -> None:
 
     console.print(table)
     console.print(
-        f"\n[dim]Enter connection number, name, or [/dim][{Color.BRAND_ALT}]new[/{Color.BRAND_ALT}][dim] to add one.[/dim]"
+        f"\n[dim]Enter connection number, name, or [/dim]"
+        f"[{Color.BRAND_ALT}]new[/{Color.BRAND_ALT}][dim] to add one.[/dim]"
     )
 
     choice = command_prompt("Select: ").strip().lower()
@@ -130,6 +131,8 @@ def _setup_new_connection() -> None:
 
 def _cmd_credentials(args: str) -> None:
     """Edit saved connection credentials without re-running the full wizard."""
+    from rich.table import Table
+
     from payp.config import (
         list_connections,
         load_connection_profile,
@@ -138,7 +141,6 @@ def _cmd_credentials(args: str) -> None:
         save_credential,
     )
     from payp.models import ConnectionCredential, ConnectionProfile
-    from rich.table import Table
     from payp.ui.theme import Color
 
     connections = list_connections()
@@ -191,7 +193,8 @@ def _cmd_credentials(args: str) -> None:
         )
 
     console.print(
-        f"\n[{Color.BRAND}]Editing credentials for[/{Color.BRAND}] [{Color.BRAND_ALT}]{target_name}[/{Color.BRAND_ALT}]"
+        f"\n[{Color.BRAND}]Editing credentials for[/{Color.BRAND}]"
+        f" [{Color.BRAND_ALT}]{target_name}[/{Color.BRAND_ALT}]"
     )
     console.print(f"  Type:     [dim]{profile.db_type.value}[/dim]")
     console.print(f"  Host:     {profile.host}")
@@ -209,8 +212,12 @@ def _cmd_credentials(args: str) -> None:
         except ValueError:
             console.print(f"[red]Invalid port '{port_str}', keeping {profile.port}.[/red]")
             port = profile.port
-        database = command_prompt("Database: ", default=profile.database).strip() or profile.database
-        username = command_prompt("Username: ", default=profile.username).strip() or profile.username
+        database = (
+            command_prompt("Database: ", default=profile.database).strip() or profile.database
+        )
+        username = (
+            command_prompt("Username: ", default=profile.username).strip() or profile.username
+        )
 
         change_pw = command_prompt("Change password? [y/N]: ").strip().lower()
         new_password: str | None = None
@@ -256,7 +263,8 @@ async def _connect_to_db(
     """Connect to a database (or switch to it if already connected), run discovery."""
     from payp.cli.loop import _ensure_chat_session, _log_db_connected_to_session
     from payp.db.cache import get_cached_table_count, has_cache, save_metadata, save_t0, save_t1
-    from payp.db.connection import ConnectionError as ConnError, ConnectionManager
+    from payp.db.connection import ConnectionError as ConnError
+    from payp.db.connection import ConnectionManager
     from payp.db.introspection import discover_t0, discover_t1, get_db_metadata
     from payp.models import DbType
     from payp.ui.theme import Color
@@ -271,7 +279,9 @@ async def _connect_to_db(
             _state["connection_manager"] = mgr
             _state["t0"] = state.t0
             _state["t1"] = state.t1
-            console.print(f"[{Color.BRAND_ALT}]Switched to {name} ({mgr.db_version})[/{Color.BRAND_ALT}]")
+            console.print(
+                f"[{Color.BRAND_ALT}]Switched to {name} ({mgr.db_version})[/{Color.BRAND_ALT}]"
+            )
             _ensure_chat_session()
             _log_db_connected_to_session(name)
             return
@@ -315,7 +325,9 @@ async def _connect_to_db(
                 version = await mgr.connect()
     except (ConnError, OSError, Exception) as e:
         console.print(f"[red]✗ Connection failed:[/red] {e}")
-        console.print("[dim]Check host, port, credentials, and that the database is reachable.[/dim]")
+        console.print(
+            "[dim]Check host, port, credentials, and that the database is reachable.[/dim]"
+        )
         return
 
     if mc is None:
@@ -347,7 +359,8 @@ async def _connect_to_db(
             save_t1(name, t1)
         else:
             console.print(
-                f"[{Color.BRAND_ALT}]Schema cache up to date ({current_count} tables)[/{Color.BRAND_ALT}]"
+                f"[{Color.BRAND_ALT}]Schema cache up to date"
+                f" ({current_count} tables)[/{Color.BRAND_ALT}]"
             )
             from payp.db.cache import load_t1
             t1 = load_t1(name)
@@ -362,14 +375,14 @@ async def _connect_to_db(
         meta = await get_db_metadata(mgr)
 
         schema_count = len(t0.schemas)
-        console.print(
-            f"  [{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] {schema_count} schema{'s' if schema_count != 1 else ''} found"
-        )
-        console.print(
-            f"  [{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] {t0.total_tables} tables, {t0.view_count} views"
-        )
-        console.print(f"  [{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] Server uptime: {meta.get('uptime', 'unknown')}")
-        console.print(f"  [{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] Database size: {meta.get('db_size', 'unknown')}")
+        plural = "s" if schema_count != 1 else ""
+        tick = f"[{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}]"
+        console.print(f"  {tick} {schema_count} schema{plural} found")
+        console.print(f"  {tick} {t0.total_tables} tables, {t0.view_count} views")
+        uptime = meta.get("uptime", "unknown")
+        db_size = meta.get("db_size", "unknown")
+        console.print(f"  [{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] Server uptime: {uptime}")
+        console.print(f"  [{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] Database size: {db_size}")
 
         save_t0(name, t0)
         save_t1(name, t1)

@@ -93,8 +93,9 @@ def _cmd_export(args: str) -> None:
     filepath.write_text("\n".join(lines))
     size_kb = filepath.stat().st_size / 1024
     console.print(
-        f"[{Color.BRAND_ALT}]✓ Session exported:[/{Color.BRAND_ALT}] [{Color.BRAND_ALT}]{filepath}[/{Color.BRAND_ALT}] "
-        f"[dim]({len(chat.messages)} messages, {size_kb:.1f} KB)[/dim]"
+        f"[{Color.BRAND_ALT}]✓ Session exported:[/{Color.BRAND_ALT}]"
+        f" [{Color.BRAND_ALT}]{filepath}[/{Color.BRAND_ALT}]"
+        f" [dim]({len(chat.messages)} messages, {size_kb:.1f} KB)[/dim]"
     )
     console.print(
         "[dim]Share via Slack, PR, email — sensitive credentials are NOT included.[/dim]"

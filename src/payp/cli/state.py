@@ -28,7 +28,7 @@ _state: dict[str, Any] = {
 console = Console()
 
 
-class CommandCancelled(Exception):
+class CommandCancelled(Exception):  # noqa: N818
     """Raised when user presses Esc during a slash command."""
 
 

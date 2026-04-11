@@ -31,7 +31,8 @@ def _cmd_models(args: str) -> None:
     table.add_column("Status")
 
     for name, provider in providers.items():
-        table.add_row(name, provider.default_model or "—", f"[{Color.BRAND_ALT}]✓ configured[/{Color.BRAND_ALT}]")
+        status_cell = f"[{Color.BRAND_ALT}]✓ configured[/{Color.BRAND_ALT}]"
+        table.add_row(name, provider.default_model or "—", status_cell)
 
     console.print(table)
     console.print(f"\nExecutor: [{Color.BRAND_ALT}]{roles.executor}[/{Color.BRAND_ALT}]")
@@ -45,7 +46,9 @@ def _setup_new_provider() -> None:
     """Interactive wizard to add a new AI provider."""
     from payp.ui.theme import Color
     console.print(f"\n[{Color.BRAND}]Add AI Provider[/{Color.BRAND}]\n")
-    console.print(f"  [{Color.BRAND_ALT}]1.[/{Color.BRAND_ALT}] OpenRouter (recommended — one key, all models)")
+    console.print(
+        f"  [{Color.BRAND_ALT}]1.[/{Color.BRAND_ALT}] OpenRouter (recommended — one key, all models)"  # noqa: E501
+    )
     console.print(f"  [{Color.BRAND_ALT}]2.[/{Color.BRAND_ALT}] Anthropic (Claude)")
     console.print(f"  [{Color.BRAND_ALT}]3.[/{Color.BRAND_ALT}] OpenAI")
     console.print(f"  [{Color.BRAND_ALT}]4.[/{Color.BRAND_ALT}] Google (Gemini)")

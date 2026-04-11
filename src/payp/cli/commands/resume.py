@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC
 
 from payp.cli.loop import _ensure_chat_session, _log_memory_backend_to_session, _short
-from payp.cli.runtime import _run_async
 from payp.cli.state import _state, console
 
 
@@ -153,8 +152,9 @@ def _cmd_resume(args: str = "") -> None:
     messages = build_chat_messages_from_session(session_info["file"])
     chat.messages = messages
 
+    n_msg = len(messages)
     console.print(
-        f"\n[{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] Resumed session with {len(messages)} message(s)"
+        f"\n[{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] Resumed session with {n_msg} message(s)"
     )
 
     events = summary.get("events") or []
@@ -168,7 +168,8 @@ def _cmd_resume(args: str = "") -> None:
         for ev in events:
             role = ev.get("role")
             etype = ev.get("event")
-            content = (ev.get("content") or "").strip() if isinstance(ev.get("content"), str) else ""
+            raw = ev.get("content")
+            content = (raw or "").strip() if isinstance(raw, str) else ""
 
             if role == "user" and content:
                 user_count += 1
@@ -221,7 +222,8 @@ def _cmd_resume(args: str = "") -> None:
 
     target_backend = summary.get("memory_backend")
     if target_backend:
-        from payp.memory.manager import backend_status as _bs, switch_backend as _sb
+        from payp.memory.manager import backend_status as _bs
+        from payp.memory.manager import switch_backend as _sb
         if _bs().get("name") != target_backend:
             try:
                 _sb(target_backend, migrate=False)

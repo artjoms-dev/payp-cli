@@ -64,5 +64,6 @@ def _cmd_queries(args: str) -> None:
             border_style="rgb(168,0,111)",
         ))
         console.print(
-            f"[dim]Ask the assistant: [{Color.BRAND_ALT}]run the {q['name']} query[/{Color.BRAND_ALT}][/dim]\n"
+            f"[dim]Ask the assistant: [{Color.BRAND_ALT}]run the {q['name']} query"
+            f"[/{Color.BRAND_ALT}][/dim]\n"
         )

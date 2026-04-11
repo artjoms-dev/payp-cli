@@ -22,7 +22,9 @@ def _cmd_memory(args: str) -> None:
             return
         target = parts[1].lower()
         if target not in VALID_BACKENDS:
-            console.print(f"[red]Unknown backend '{target}'. Valid: {', '.join(VALID_BACKENDS)}[/red]")
+            console.print(
+                f"[red]Unknown backend '{target}'. Valid: {', '.join(VALID_BACKENDS)}[/red]"
+            )
             return
 
         migrate_all = len(parts) >= 3 and parts[2].lower() in ("all", "*")
@@ -71,7 +73,10 @@ def _cmd_memory(args: str) -> None:
 
         _log_memory_backend_to_session(target)
 
-        console.print(f"  [{Color.BRAND_ALT}]Switched[/{Color.BRAND_ALT}] {result['from']} -> {result['to']}")
+        console.print(
+            f"  [{Color.BRAND_ALT}]Switched[/{Color.BRAND_ALT}]"
+            f" {result['from']} -> {result['to']}"
+        )
         if result.get("migration"):
             stats = result["migration"]
             console.print(f"  Migrated: {stats.get('migrated', 0)} entries")
@@ -79,7 +84,9 @@ def _cmd_memory(args: str) -> None:
                 for err in stats["errors"]:
                     console.print(f"  [red]Error:[/red] {err}")
 
-        console.print("  [dim]Session continues — next knowledge read/write uses new backend.[/dim]")
+        console.print(
+            "  [dim]Session continues — next knowledge read/write uses new backend.[/dim]"
+        )
         return
 
     if subcommand == "migrate":
@@ -127,5 +134,6 @@ def _cmd_memory(args: str) -> None:
     console.print()
     console.print(table)
     console.print(
-        "  [dim]Usage: /memory [all] | /memory switch <native|mempalace> | /memory migrate | /memory status[/dim]\n"
+        "  [dim]Usage: /memory [all] | /memory switch <native|mempalace>"
+        " | /memory migrate | /memory status[/dim]\n"
     )

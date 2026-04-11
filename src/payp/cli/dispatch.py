@@ -7,13 +7,13 @@ one place.
 Import order is carefully arranged to avoid circular imports:
   dispatch -> commands/* -> state / runtime   (one direction)
   loop     -> dispatch                        (lazy, inside _interactive_loop)
-  _legacy  -> dispatch                        (for _handle_command)
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from payp.cli.state import CommandCancelled, console
 
@@ -37,10 +37,23 @@ def _wrap(fn: Callable[[], None]) -> Callable[[str], None]:
 def _build_registry() -> dict[str, SlashCommand]:
     """Build SLASH_COMMANDS lazily to avoid circular imports at module load time."""
     # Import command modules here — they all import from state/runtime, never from dispatch
-    from payp.cli.commands import context, diff, export, help as help_cmd
-    from payp.cli.commands import history, knowledge, memory, mode, models
-    from payp.cli.commands import queries, resume, schema, skills, snapshots
-    from payp.cli.commands import db
+    from payp.cli.commands import (
+        context,
+        db,
+        diff,
+        export,
+        history,
+        knowledge,
+        memory,
+        mode,
+        models,
+        queries,
+        resume,
+        schema,
+        skills,
+        snapshots,
+    )
+    from payp.cli.commands import help as help_cmd
 
     return {
         "/db": SlashCommand(db._cmd_db, "manage database connections", True),

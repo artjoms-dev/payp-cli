@@ -55,7 +55,8 @@ def _cmd_snapshots() -> None:
         console.print(f"  Where: {snap['where']}")
         console.print(f"  File: {snap['file']}")
         console.print(
-            "\n[dim]Ask the assistant to restore this snapshot, or use /snapshots again to delete.[/dim]"
+            "\n[dim]Ask the assistant to restore this snapshot,"
+            " or use /snapshots again to delete.[/dim]"
         )
 
 
@@ -115,7 +116,11 @@ def _cmd_rollback() -> None:
 
     if preview_rows:
         from rich.table import Table
-        console.print(f"\n[{Color.BRAND}]Preview[/{Color.BRAND}] (first {len(preview_rows)} of {snap['row_count']} rows):")
+        n_rows = snap["row_count"]
+        console.print(
+            f"\n[{Color.BRAND}]Preview[/{Color.BRAND}]"
+            f" (first {len(preview_rows)} of {n_rows} rows):"
+        )
         cols = list(preview_rows[0].keys())
         preview_table = Table(show_header=True, header_style=Color.BRAND_ALT, show_lines=False)
         for col in cols:
@@ -149,7 +154,9 @@ def _cmd_rollback() -> None:
 
     if tool_result.success:
         restored = tool_result.data.get("restored", 0) if tool_result.data else 0
-        table_name = tool_result.data.get("table", snap["table"]) if tool_result.data else snap["table"]
+        table_name = (
+            tool_result.data.get("table", snap["table"]) if tool_result.data else snap["table"]
+        )
 
         restored_ids = []
         try:
@@ -173,7 +180,8 @@ def _cmd_rollback() -> None:
                 )
 
         console.print(
-            f"[{Color.BRAND_ALT}]✓ Restored {restored} rows to {table_name}[/{Color.BRAND_ALT}]{ids_str}"
+            f"[{Color.BRAND_ALT}]✓ Restored {restored} rows to {table_name}"
+            f"[/{Color.BRAND_ALT}]{ids_str}"
         )
 
         chat = _state.get("chat_session")
