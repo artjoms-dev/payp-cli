@@ -40,8 +40,15 @@ from payp.models import (
     SecurityMode,
 )
 
+from payp.cli.loop import (
+    _ensure_chat_session,
+    _log_db_connected_to_session,
+    _log_memory_backend_to_session,
+    _short,
+)
 from payp.cli.runtime import _run_async, command_prompt
 from payp.cli.state import CommandCancelled, _state, console, get_config
+from payp.cli.welcome import _show_welcome
 
 app = typer.Typer(
     name="payp",
@@ -71,79 +78,6 @@ def main(
         _show_welcome()
         _interactive_loop()
 
-
-def _show_welcome() -> None:
-    from payp.storage.snapshots import snapshot_count
-    from payp.ui.dashboard import render_compact_hint, render_status_dashboard
-    from payp.ui.onboarding import (
-        is_first_run,
-        prompt_model_setup_only,
-        run_onboarding,
-        should_prompt_model_setup,
-    )
-
-    # True first-run: no models AND no connections → full onboarding
-    if is_first_run():
-        run_onboarding(console)
-        return
-
-    # Returning user but no model → prompt just for model
-    if should_prompt_model_setup():
-        prompt_model_setup_only(console)
-
-    config = get_config()
-
-    # Resolve model info
-    roles = load_model_roles()
-    providers = load_models_config()
-    model_name: str | None = roles.executor if providers else None
-    model_provider: str | None = None
-    if model_name:
-        parts = model_name.split("/")
-        if len(parts) > 1:
-            model_provider = parts[0]
-            model_name = "/".join(parts[1:])
-    reviewer_name: str | None = roles.reviewer if providers and roles.reviewer else None
-    if reviewer_name:
-        parts = reviewer_name.split("/")
-        if len(parts) > 1:
-            reviewer_name = "/".join(parts[1:])
-
-    render_status_dashboard(
-        console=console,
-        version=__version__,
-        model_name=model_name,
-        model_provider=model_provider,
-        reviewer_name=reviewer_name,
-        connection_name=None,
-        connection_status=None,
-        mode=config.default_mode.value,
-        snapshot_count=snapshot_count(),
-    )
-
-    render_compact_hint(console)
-
-    # Legacy knowledge dir notice — wording depends on whether migration
-    # has already happened. If global has data, the legacy dir is just dead
-    # weight and the message is softer.
-    from payp.storage.knowledge import (
-        get_knowledge_dir,
-        has_legacy_knowledge,
-        list_knowledge_files,
-    )
-    if has_legacy_knowledge():
-        global_populated = bool(list_knowledge_files()) if get_knowledge_dir().exists() else False
-        if global_populated:
-            console.print(
-                "[dim]ℹ Legacy [/dim][dim]./payp/knowledge/[/dim][dim] still on disk "
-                "(already migrated). Ask me to clean it up or run "
-                "[/dim][dim]/knowledge migrate-legacy[/dim][dim] again.[/dim]"
-            )
-        else:
-            console.print(
-                "[yellow]⚠[/yellow] Found legacy [dim]./payp/knowledge/[/dim] — "
-                "knowledge is now global. Run [bold]/knowledge migrate-legacy[/bold] to move it."
-            )
 
 
 def _slash_completer():
@@ -252,97 +186,8 @@ def _interactive_loop() -> None:
                 console.print(f"[red]Error: {e}[/red]")
 
 
-def _ensure_chat_session() -> None:
-    """Initialize or reinitialize the chat session."""
-    from payp.core.chat import ChatSession
-    from payp.core.llm import LLMClient
-
-    # Check if models are configured
-    providers = load_models_config()
-    if not providers:
-        return
-
-    # Create LLM client
-    if not _state.get("llm_client"):
-        _state["llm_client"] = LLMClient()
-
-    config = get_config()
-
-    # Preserve message history if chat session already exists
-    existing_messages = None
-    existing_chat = _state.get("chat_session")
-    if existing_chat:
-        existing_messages = existing_chat.messages
-
-    new_session = ChatSession(
-        llm=_state["llm_client"],
-        console=console,
-        connection_manager=_state.get("connection_manager"),
-        mode=config.default_mode,
-        t0=_state.get("t0"),
-        t1=_state.get("t1"),
-    )
-
-    # Restore message history
-    if existing_messages:
-        new_session.messages = existing_messages
-
-    # Share the CLI's multi_conn manager so the LLM sees all active connections
-    mc = _state.get("multi_conn_manager")
-    if mc:
-        new_session.multi_conn = mc
-
-    _state["chat_session"] = new_session
-
-    # Record the active memory backend so /resume can restore it.
-    try:
-        from payp.memory.manager import get_memory_backend
-        new_session.session.log_memory_backend(get_memory_backend().name)
-    except Exception:
-        pass
 
 
-def _log_db_connected_to_session(connection_name: str) -> None:
-    """Record the active DB in the current chat session's JSONL file.
-
-    Used by /resume to auto-reconnect to the same database. Safe no-op
-    if the chat session isn't initialised yet (e.g. models not configured).
-    """
-    chat = _state.get("chat_session")
-    if not chat:
-        return
-    session = getattr(chat, "session", None)
-    if not session:
-        return
-    try:
-        session.log_db_connected(connection_name)
-    except Exception:
-        # Persistence must never break the connect flow.
-        pass
-
-
-def _short(s: str, max_len: int) -> str:
-    """Truncate a string with an ellipsis for one-line previews."""
-    s = s.replace("\n", " ")
-    return s if len(s) <= max_len else s[: max_len - 1] + "…"
-
-
-def _log_memory_backend_to_session(backend_name: str) -> None:
-    """Record the active memory backend in the current session's JSONL.
-
-    Used by /resume to restore native vs mempalace across sessions.
-    Safe no-op if no chat session is active yet.
-    """
-    chat = _state.get("chat_session")
-    if not chat:
-        return
-    session = getattr(chat, "session", None)
-    if not session:
-        return
-    try:
-        session.log_memory_backend(backend_name)
-    except Exception:
-        pass
 
 
 def _handle_command(cmd: str) -> None:

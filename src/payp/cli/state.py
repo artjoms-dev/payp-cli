@@ -14,8 +14,6 @@ from rich.console import Console
 from payp.config import load_config
 from payp.models import AppConfig
 
-# Mutable session state — all keys are written by cli commands, read everywhere.
-# Python module caching guarantees a single instance across all importing modules.
 _state: dict[str, Any] = {
     "config": None,
     "active_connection": None,
