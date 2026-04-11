@@ -32,7 +32,15 @@ class QueryTool(BaseTool):
     async def call(self, args: dict[str, Any], context: dict[str, Any]) -> ToolResult:
         from payp.db.connection import ConnectionManager
 
-        conn: ConnectionManager | None = context.get("connection_manager")
+        # Prefer the multi-connection manager's *current* active connection
+        # so mid-round /switch_connection calls take effect immediately.
+        # Falls back to the chat session's connection if multi_conn is absent.
+        conn: ConnectionManager | None = None
+        mc = context.get("multi_conn")
+        if mc is not None:
+            conn = mc.active_manager
+        if conn is None:
+            conn = context.get("connection_manager")
         if not conn or not conn.is_connected:
             return ToolResult(success=False, error="Not connected to a database")
 

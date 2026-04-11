@@ -109,8 +109,13 @@ syntactically correct SQL for that dialect.
 what you're about to do.
 
 ## CRITICAL RULES
-- ALWAYS check read_knowledge for a table BEFORE working with it. The knowledge base may contain \
-business logic, enum values, NULL semantics, and valid filters that prevent wrong queries.
+- BEFORE working with a table, check whether the "Business Knowledge (INLINED...)" \
+section above already contains knowledge for it. If yes, USE IT — do NOT call read_knowledge \
+for the same table (you already have the content, calling the tool is pure waste). \
+Only call read_knowledge for tables that are NOT in the inlined knowledge block. \
+The knowledge base may contain business logic, enum values, NULL semantics, valid filters, \
+and KNOWN TOTALS/COUNTS — prefer citing a known count from knowledge over re-running \
+`SELECT COUNT(*)` unless the user explicitly asked for a fresh number.
 - Use search_knowledge to find knowledge across all tables when looking for a concept or pattern \
 (e.g., 'timezone handling', 'soft delete pattern', 'status enum values').
 - When the user asks to CLEAN UP, PURGE, REMOVE OLD, or FREE SPACE (sessions, queries, cache, \
@@ -443,12 +448,13 @@ Do not guess or pretend you can access data.""")
             from payp.db.introspection import format_t1_for_context
             schema_parts.append(format_t1_for_context(t1))
         if t2_context:
-            schema_parts.append("### Relevant Table Details (already loaded — DO NOT call schema_lookup for these)")
+            schema_parts.append("### Relevant Table Details (already loaded — DO NOT call schema_lookup or read_knowledge for these)")
             schema_parts.append(t2_context)
             schema_parts.append(
-                "\n**The DDL above is AUTHORITATIVE and RELIABLE.** "
-                "Use it directly. Only call schema_lookup if you need a DIFFERENT table "
-                "that is not shown above."
+                "\n**The DDL and Business Knowledge above are AUTHORITATIVE and RELIABLE.** "
+                "Use them directly. Only call schema_lookup if you need a DIFFERENT table "
+                "not shown above, and only call read_knowledge for tables whose business "
+                "knowledge is NOT already inlined above."
             )
         sections.append("\n".join(schema_parts))
 

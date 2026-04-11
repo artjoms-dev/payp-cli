@@ -82,6 +82,25 @@ class SwitchConnectionTool(BaseTool):
                 error=f"Connection '{name}' is not active. Available: {available}",
             )
 
+        # Propagate the switch to the in-flight tool-call context AND the
+        # parent ChatSession so any tools that still read
+        # context["connection_manager"] or self.conn (dialect rules,
+        # schema lookups, etc.) pick up the new connection immediately
+        # instead of using the stale one captured at round start.
+        new_mgr = mc.active_manager
+        new_state = mc.active_state
+        if new_mgr is not None:
+            context["connection_manager"] = new_mgr
+            if new_state is not None:
+                context["t0"] = new_state.t0
+                context["t1"] = new_state.t1
+            chat = context.get("chat_session")
+            if chat is not None:
+                chat.conn = new_mgr
+                if new_state is not None:
+                    chat.t0 = new_state.t0
+                    chat.t1 = new_state.t1
+
         return ToolResult(
             success=True,
             data={"active": name},

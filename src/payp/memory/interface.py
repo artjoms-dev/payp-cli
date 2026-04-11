@@ -72,6 +72,10 @@ class MemoryBackend(Protocol):
         """
         ...
 
-    def status(self) -> dict[str, Any]:
-        """Return backend status: {name, entries, size, healthy}."""
+    def status(self, connection: str | None = None) -> dict[str, Any]:
+        """Return backend status: {name, entries, size, healthy}.
+
+        If connection is given, entries/size are scoped to that connection
+        (plus any "shared" connection). Otherwise totals across all entries.
+        """
         ...

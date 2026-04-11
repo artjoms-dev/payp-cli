@@ -284,7 +284,11 @@ class ChatSession:
             pass  # Don't let logging errors break the chat flow
 
     async def _handle_knowledge_proposal(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Show a knowledge discovery to the user for approval before saving."""
+        """Show a knowledge discovery to the user for approval before saving.
+
+        In YOLO mode the proposal is auto-saved without prompting — the panel
+        is still printed so the user can see what was recorded.
+        """
         from prompt_toolkit import PromptSession
         from rich.markdown import Markdown
         from rich.panel import Panel
@@ -301,6 +305,18 @@ class ChatSession:
             subtitle=f"section: {section}",
             border_style="yellow",
         ))
+
+        # YOLO mode → auto-save, skip prompt
+        if self.mode == SecurityMode.YOLO:
+            from payp.memory.manager import get_memory_backend
+            backend = get_memory_backend()
+            content = f"\n### {section.replace('_', ' ').title()}\n{discovery}"
+            result = await backend.save(conn, table, content, section=section)
+            location = result.get("file") or result.get("id") or "memory"
+            self.console.print(
+                f"  [bold rgb(180,224,76)]✓ Auto-saved (yolo) to {location}[/bold rgb(180,224,76)]"
+            )
+            return result
 
         # Pause AbortWatcher during user prompt
         watcher = getattr(self, "_watcher", None)
@@ -953,9 +969,20 @@ class ChatSession:
             chunks = self.llm.chat_stream(full_messages, tools=tools)
             content, raw_tool_calls = await stream_response(chunks, self.console)
 
-            # If LLM returned text content, add to history
+            # If LLM returned text content, add to history AND persist to the
+            # session JSONL so /resume can reconstruct the full conversation.
+            # (log_user is called once in send_message; log_assistant must be
+            # called here — once per LLM turn — because there can be multiple
+            # assistant turns inside a single user message when tools run.)
             if content:
                 self.messages.append({"role": "assistant", "content": content})
+                try:
+                    self.session.log_assistant(
+                        content, model=self.llm.get_executor_model()
+                    )
+                except Exception:
+                    # Logging must never break the chat loop.
+                    pass
 
             # If no tool calls, we're done
             if not raw_tool_calls:
@@ -1001,8 +1028,18 @@ class ChatSession:
             else:
                 self.messages.append(assistant_msg)
 
-            # Execute each tool call
+            # Execute each tool call.
+            # We collect every tool response into a per-round list and then
+            # append the assistant message ONCE followed by all responses.
+            # This keeps the OpenAI-required ordering intact — every
+            # tool_call must be matched by a `tool` message in sequence —
+            # and the same block is persisted into self.messages so the
+            # NEXT user turn sees a valid history. (Previously: assistant
+            # was appended once per tool call, responses never reached
+            # self.messages, and strict providers like Azure OpenAI 400'd
+            # with "No tool output found for function call ...".)
             context = self._build_context()
+            tool_response_messages: list[dict[str, Any]] = []
             for tc in tool_calls:
                 if watcher.aborted:
                     self.console.print("  [yellow]↯ Aborted by user (Esc).[/yellow]")
@@ -1045,16 +1082,40 @@ class ChatSession:
                         if tc.name == "propose_knowledge" and result.success and result.data:
                             tool_response = await self._handle_knowledge_proposal(result.data)
 
-                # Add tool result to messages.
+                # Persist the tool call to the session JSONL so /resume can
+                # reconstruct what happened. Best-effort summary: error string
+                # on failure, or a compact success descriptor otherwise.
+                try:
+                    if isinstance(tool_response, dict) and "error" in tool_response:
+                        _tc_ok = False
+                        _tc_sum = str(tool_response.get("error", ""))[:200]
+                    else:
+                        _tc_ok = True
+                        _tc_sum = _summarize_tool_response(tc.name, tool_response)
+                    self.session.log_tool_call(
+                        tool_name=tc.name,
+                        args=tc.arguments,
+                        success=_tc_ok,
+                        summary=_tc_sum,
+                    )
+                except Exception:
+                    pass
+
                 # Wrap the payload in an untrusted envelope so a row value
                 # like "ignore previous instructions" is received as DATA,
                 # not as an instruction. See _wrap_tool_output for details.
-                full_messages.append(assistant_msg)
-                full_messages.append({
+                tool_response_messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
                     "content": self._wrap_tool_output(tc.name, tool_response),
                 })
+
+            # Append assistant (tool_calls) + all tool responses as a single
+            # contiguous block to BOTH the transient in-flight list and the
+            # persistent history so subsequent turns replay correctly.
+            full_messages.append(assistant_msg)
+            full_messages.extend(tool_response_messages)
+            self.messages.extend(tool_response_messages)
 
             # Continue the loop — LLM will process tool results and may call more tools
             # or generate a final text response
@@ -1066,6 +1127,42 @@ class ChatSession:
             )
 
         # Done
+
+
+def _summarize_tool_response(tool_name: str, response: Any) -> str:
+    """Build a compact one-line summary of a tool response for session logs.
+
+    Kept free of the actual payload so session files stay small — the row
+    data itself is intentionally not persisted.
+    """
+    if not isinstance(response, dict):
+        return f"{tool_name}: ok"
+    d = response
+    # execute_sql-style results
+    if "row_count" in d or "rows_affected" in d or "execution_ms" in d:
+        rows = d.get("row_count")
+        if rows is None:
+            rows = d.get("rows_affected")
+        ms = d.get("execution_ms")
+        bits = []
+        if rows is not None:
+            bits.append(f"{rows} row{'s' if rows != 1 else ''}")
+        if ms is not None:
+            bits.append(f"{ms}ms")
+        if bits:
+            return ", ".join(bits)
+    # propose_knowledge + chart tools often return a small descriptor
+    if "table" in d and "section" in d:
+        return f"knowledge proposal for {d.get('table')}"
+    if "chart_type" in d or "points" in d:
+        pts = d.get("points") or d.get("point_count")
+        t = d.get("chart_type", "chart")
+        return f"{t} rendered" + (f" ({pts} points)" if pts else "")
+    if "saved" in d and d.get("saved"):
+        return f"saved → {d.get('file') or d.get('id') or 'memory'}"
+    if "count" in d:
+        return f"{d['count']} item(s)"
+    return f"{tool_name}: ok"
 
 
 def _parse_tool_calls(raw_calls: list[dict]) -> list[ToolCall]:

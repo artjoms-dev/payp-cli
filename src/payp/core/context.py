@@ -203,8 +203,22 @@ async def build_t2_context(
         # Fallback: if backend fails, try direct storage access
         from payp.storage.knowledge import load_knowledge_for_tables
         knowledge = load_knowledge_for_tables(conn_name, table_names)
-    if knowledge and total_chars + len(knowledge) <= budget:
-        parts.append(knowledge)
+    if knowledge:
+        # Wrap the knowledge block in a loud header so the LLM treats it
+        # as authoritative and doesn't feel compelled to re-run queries
+        # for facts the knowledge already answers.
+        knowledge_block = (
+            "### Business Knowledge (INLINED — use this before running queries)\n"
+            "The following was recorded from prior investigations. For simple factual\n"
+            "questions (totals, known counts, enum meanings, business rules) that the\n"
+            "knowledge below already answers, CITE IT DIRECTLY instead of re-running a\n"
+            "query — unless the user asks for a fresh count or the data may have changed.\n"
+            "You do NOT need to call read_knowledge for any table listed here; you\n"
+            "already have it.\n\n"
+            + knowledge
+        )
+        if total_chars + len(knowledge_block) <= budget:
+            parts.append(knowledge_block)
 
     return "\n\n".join(parts)
 

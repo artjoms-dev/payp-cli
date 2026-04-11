@@ -23,7 +23,7 @@ venv/
 # payp local state
 exports/
 .payp/
-payp/
+/payp/
 # Note: payp/knowledge/ is the team-shared export artifact. If you want to
 # commit exported knowledge, unignore it explicitly:
 #   !payp/knowledge/

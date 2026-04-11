@@ -34,12 +34,19 @@ def reset_backend() -> None:
     _current_backend = None
 
 
-def switch_backend(new_backend_name: str, migrate: bool = False) -> dict[str, Any]:
+def switch_backend(
+    new_backend_name: str,
+    migrate: bool = False,
+    connection: str | None = None,
+) -> dict[str, Any]:
     """Hot-switch to a different memory backend.
 
     Args:
         new_backend_name: "native" or "mempalace".
-        migrate: If True, migrate all data from the old backend to the new one.
+        migrate: If True, migrate data from the old backend to the new one.
+        connection: If given, migration is scoped to that connection (plus
+            "shared"). If None, migration copies every entry across every
+            connection. Ignored when migrate=False.
 
     Returns:
         {"switched": True, "from": <old>, "to": <new>, "migration": <stats_or_None>}
@@ -68,10 +75,12 @@ def switch_backend(new_backend_name: str, migrate: bool = False) -> dict[str, An
 
     migration_stats: dict[str, Any] | None = None
     if migrate:
-        # Run migration: new_backend.migrate_from(old_backend)
+        # Run migration: new_backend.migrate_from(old_backend, connection=...)
         loop = asyncio.new_event_loop()
         try:
-            migration_stats = loop.run_until_complete(new_backend.migrate_from(old_backend))
+            migration_stats = loop.run_until_complete(
+                new_backend.migrate_from(old_backend, connection=connection)
+            )
         finally:
             loop.close()
 
@@ -90,9 +99,9 @@ def switch_backend(new_backend_name: str, migrate: bool = False) -> dict[str, An
     }
 
 
-def backend_status() -> dict[str, Any]:
-    """Return status dict from the current backend."""
-    return get_memory_backend().status()
+def backend_status(connection: str | None = None) -> dict[str, Any]:
+    """Return status dict from the current backend, optionally scoped."""
+    return get_memory_backend().status(connection=connection)
 
 
 def _create_backend(config: MemoryConfig, *, raise_on_failure: bool = False) -> MemoryBackend:

@@ -269,7 +269,12 @@ class MemPalaceBackend:
         def _list() -> list[dict[str, Any]]:
             kwargs: dict[str, Any] = {"include": ["metadatas"]}
             if connection:
-                kwargs["where"] = {"wing": connection}
+                # Scope to the active wing plus the "shared" pseudo-wing
+                # so cross-database notes remain visible.
+                if connection == "shared":
+                    kwargs["where"] = {"wing": "shared"}
+                else:
+                    kwargs["where"] = {"wing": {"$in": [connection, "shared"]}}
 
             try:
                 results = self._col.get(**kwargs)
@@ -338,10 +343,19 @@ class MemPalaceBackend:
 
         return {"migrated": migrated, "errors": errors}
 
-    def status(self) -> dict[str, Any]:
-        """Return backend health and statistics."""
+    def status(self, connection: str | None = None) -> dict[str, Any]:
+        """Return backend health and statistics, optionally scoped."""
         try:
-            drawer_count = self._col.count()
+            if connection:
+                where: dict[str, Any]
+                if connection == "shared":
+                    where = {"wing": "shared"}
+                else:
+                    where = {"wing": {"$in": [connection, "shared"]}}
+                results = self._col.get(where=where, include=["metadatas"])
+                drawer_count = len(results.get("metadatas", []) or [])
+            else:
+                drawer_count = self._col.count()
         except Exception:
             drawer_count = 0
 
@@ -359,4 +373,5 @@ class MemPalaceBackend:
             "collection": COLLECTION_NAME,
             "knowledge_graph": kg_stats or "not available",
             "healthy": drawer_count >= 0,
+            "scope": connection or "all",
         }

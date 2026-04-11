@@ -377,6 +377,56 @@ def _ensure_chat_session() -> None:
 
     _state["chat_session"] = new_session
 
+    # Record the active memory backend so /resume can restore it.
+    try:
+        from payp.memory.manager import get_memory_backend
+        new_session.session.log_memory_backend(get_memory_backend().name)
+    except Exception:
+        pass
+
+
+def _log_db_connected_to_session(connection_name: str) -> None:
+    """Record the active DB in the current chat session's JSONL file.
+
+    Used by /resume to auto-reconnect to the same database. Safe no-op
+    if the chat session isn't initialised yet (e.g. models not configured).
+    """
+    chat = _state.get("chat_session")
+    if not chat:
+        return
+    session = getattr(chat, "session", None)
+    if not session:
+        return
+    try:
+        session.log_db_connected(connection_name)
+    except Exception:
+        # Persistence must never break the connect flow.
+        pass
+
+
+def _short(s: str, max_len: int) -> str:
+    """Truncate a string with an ellipsis for one-line previews."""
+    s = s.replace("\n", " ")
+    return s if len(s) <= max_len else s[: max_len - 1] + "…"
+
+
+def _log_memory_backend_to_session(backend_name: str) -> None:
+    """Record the active memory backend in the current session's JSONL.
+
+    Used by /resume to restore native vs mempalace across sessions.
+    Safe no-op if no chat session is active yet.
+    """
+    chat = _state.get("chat_session")
+    if not chat:
+        return
+    session = getattr(chat, "session", None)
+    if not session:
+        return
+    try:
+        session.log_memory_backend(backend_name)
+    except Exception:
+        pass
+
 
 def _handle_command(cmd: str) -> None:
     """Route slash commands from interactive mode."""
@@ -806,6 +856,7 @@ async def _connect_to_db(
             from payp.ui.theme import Color
             console.print(f"[{Color.BRAND_ALT}]Switched to {name} ({mgr.db_version})[/{Color.BRAND_ALT}]")
             _ensure_chat_session()
+            _log_db_connected_to_session(name)
             return
 
     mgr = ConnectionManager(profile, credential)
@@ -920,6 +971,7 @@ async def _connect_to_db(
 
     # Refresh chat session with new connection context
     _ensure_chat_session()
+    _log_db_connected_to_session(name)
 
     console.print()
 
@@ -1547,11 +1599,108 @@ def _cmd_resume(args: str = "") -> None:
         f"\n[{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] Resumed session with {len(messages)} message(s)"
     )
 
-    # Auto-reconnect to the session's connection if possible and not already
-    target_conn = summary.get("connection")
+    # Render the loaded transcript so the user can see what's actually in
+    # context before typing their next prompt. We iterate the full event
+    # stream (not just text messages) so tool calls, SQL executions, and
+    # knowledge proposals show up inline — matching what was on screen
+    # during the live session.
+    events = summary.get("events") or []
+    if events:
+        from rich.markdown import Markdown
+        from rich.rule import Rule
+
+        console.print(Rule(style="dim"))
+        user_count = 0
+        assistant_count = 0
+        for ev in events:
+            role = ev.get("role")
+            etype = ev.get("event")
+            content = (ev.get("content") or "").strip() if isinstance(ev.get("content"), str) else ""
+
+            if role == "user" and content:
+                user_count += 1
+                console.print(f"[bold {Color.BRAND}]you[/bold {Color.BRAND}] › {content}")
+                console.print()
+            elif role == "assistant" and content:
+                assistant_count += 1
+                console.print(f"[bold {Color.BRAND_ALT}]payp[/bold {Color.BRAND_ALT}] ›")
+                try:
+                    console.print(Markdown(content))
+                except Exception:
+                    console.print(content)
+                console.print()
+            elif etype == "tool_call":
+                tool = ev.get("tool", "?")
+                ok = ev.get("success", True)
+                tsum = ev.get("summary") or ""
+                icon = f"[{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}]" if ok else "[red]✗[/red]"
+                args = ev.get("args") or {}
+                # Condense args to one line, elide long strings
+                arg_preview = ", ".join(
+                    f"{k}={_short(str(v), 40)}" for k, v in list(args.items())[:4]
+                )
+                console.print(f"  [dim]→ {tool}({arg_preview})[/dim]")
+                console.print(f"  {icon} [dim]{tool}: {_short(tsum, 90)}[/dim]")
+            elif etype == "sql_generated":
+                sql = (ev.get("sql") or "").strip().splitlines()
+                first = sql[0] if sql else ""
+                more = f" [dim](+{len(sql) - 1} lines)[/dim]" if len(sql) > 1 else ""
+                console.print(f"  [dim]sql:[/dim] [cyan]{_short(first, 90)}[/cyan]{more}")
+            elif etype == "query_executed":
+                rows = ev.get("rows")
+                ms = ev.get("ms")
+                status = ev.get("status", "ok")
+                err = ev.get("error")
+                if err:
+                    console.print(f"  [red]query error:[/red] [dim]{_short(err, 90)}[/dim]")
+                else:
+                    console.print(
+                        f"  [dim]↳ {rows} row{'s' if rows != 1 else ''} in {ms}ms "
+                        f"({status})[/dim]"
+                    )
+        console.print(Rule(style="dim"))
+
+        if assistant_count == 0 and user_count > 0:
+            console.print(
+                "[dim]⚠ No assistant replies stored on disk for this session "
+                "(it was recorded before the log_assistant fix). New turns "
+                "from now on will be persisted fully.[/dim]"
+            )
+
+    # Restore the memory backend the session was using (native vs mempalace).
+    # No migration — data lives on the backends themselves, we just swap which
+    # one is active so /knowledge points at the same place as before.
+    target_backend = summary.get("memory_backend")
+    if target_backend:
+        from payp.memory.manager import backend_status as _bs, switch_backend as _sb
+        if _bs().get("name") != target_backend:
+            try:
+                _sb(target_backend, migrate=False)
+                console.print(f"[dim]Memory backend restored → {target_backend}[/dim]")
+                _log_memory_backend_to_session(target_backend)
+            except (RuntimeError, ValueError) as exc:
+                console.print(
+                    f"[dim]Could not restore memory backend "
+                    f"'{target_backend}': {exc}[/dim]"
+                )
+
+    # Auto-reconnect to the session's connection if possible and not already.
+    # Prefer the logged connection from inside the JSONL (accurate even when
+    # the session switched DBs mid-stream), fall back to the filename-parsed
+    # connection for sessions written before db_connected events existed.
+    target_conn = summary.get("connection") or session_info.get("connection")
+    if target_conn in ("no-db", "?", "", None):
+        target_conn = None
     if target_conn and target_conn != _state.get("active_connection"):
-        console.print(f"[dim]Reconnecting to {target_conn}...[/dim]")
-        _cmd_db(target_conn)
+        # Only attempt reconnect if this connection still exists on disk
+        if target_conn in list_connections():
+            console.print(f"[dim]Reconnecting to {target_conn}...[/dim]")
+            _cmd_db(target_conn)
+        else:
+            console.print(
+                f"[dim]Session was on [bold]{target_conn}[/bold] but that "
+                "connection no longer exists — use /db to pick one.[/dim]"
+            )
 
 
 def _format_session_age(ts: str) -> str:
@@ -1754,17 +1903,26 @@ def _cmd_knowledge(args: str = "") -> None:
     backend = get_memory_backend()
     backend_name = backend.name
 
+    # Scope to the active connection so /knowledge only shows entries for
+    # the DB you're currently working with (+ the "shared" pseudo-connection).
+    # Passing `all` as the first arg disables the scope.
+    show_all = subcommand in ("all", "*")
+    active_conn = None if show_all else _state.get("active_connection")
+
     try:
-        entries = _run_async(backend.list_all())
+        entries = _run_async(backend.list_all(connection=active_conn))
     except Exception as e:
         console.print(f"[red]Failed to list knowledge: {e}[/red]")
         return
 
     if not entries:
+        scope_hint = f" for [cyan]{active_conn}[/cyan]" if active_conn else ""
         console.print(
-            f"[dim]No knowledge entries yet. (backend: {backend_name})[/dim]\n"
+            f"[dim]No knowledge entries{scope_hint}. (backend: {backend_name})[/dim]\n"
             "[dim]Knowledge is saved via propose_knowledge after user approval.[/dim]"
         )
+        if active_conn:
+            console.print("[dim]Use [bold]/knowledge all[/bold] to list every connection.[/dim]")
         return
 
     items = []
@@ -1801,8 +1959,9 @@ def _cmd_knowledge(args: str = "") -> None:
             return True
         return False
 
+    scope_label = f" • {active_conn}" if active_conn else " • all"
     kb_title: list[tuple[str, str]] = [
-        (PTColor.BRAND, f"Knowledge Base ({len(items)} entries) — backend: {backend_name}"),
+        (PTColor.BRAND, f"Knowledge Base ({len(items)} entries){scope_label} — backend: {backend_name}"),
     ]
     result = interactive_select(
         console=console,
@@ -1848,16 +2007,23 @@ def _cmd_memory(args: str) -> None:
     subcommand = parts[0] if parts else ""
 
     if subcommand == "switch":
-        # /memory switch <backend>
+        # /memory switch <backend> [all]
+        #   default → migration is scoped to the active connection (+ shared)
+        #   "all"   → migration covers every connection in the old backend
         if len(parts) < 2:
-            console.print(f"[dim]Usage: /memory switch <{'|'.join(VALID_BACKENDS)}>[/dim]")
+            console.print(
+                f"[dim]Usage: /memory switch <{'|'.join(VALID_BACKENDS)}> [all][/dim]"
+            )
             return
         target = parts[1].lower()
         if target not in VALID_BACKENDS:
             console.print(f"[red]Unknown backend '{target}'. Valid: {', '.join(VALID_BACKENDS)}[/red]")
             return
 
-        current = backend_status()
+        migrate_all = len(parts) >= 3 and parts[2].lower() in ("all", "*")
+        active_conn = _state.get("active_connection") if not migrate_all else None
+
+        current = backend_status(connection=active_conn)
         if current["name"] == target:
             console.print(f"[dim]Already using '{target}' backend.[/dim]")
             return
@@ -1880,16 +2046,30 @@ def _cmd_memory(args: str) -> None:
         if current["entries"] > 0:
             from prompt_toolkit import prompt as pt_prompt
 
+            scope_label = (
+                f"{active_conn} (+ shared)" if active_conn else "all connections"
+            )
             answer = pt_prompt(
-                f"  Migrate {current['entries']} entries from '{current['name']}' to '{target}'? [y/N] "
+                f"  Migrate {current['entries']} entries "
+                f"[{scope_label}] from '{current['name']}' to '{target}'? [y/N] "
             ).strip().lower()
             migrate = answer in ("y", "yes")
+            if not migrate_all and active_conn:
+                console.print(
+                    "  [dim]Tip: use [bold]/memory switch "
+                    f"{target} all[/bold][dim] to migrate every connection.[/dim]"
+                )
 
         try:
-            result = switch_backend(target, migrate=migrate)
+            result = switch_backend(
+                target, migrate=migrate, connection=active_conn
+            )
         except RuntimeError as exc:
             console.print(f"[red]{exc}[/red]")
             return
+
+        # Persist the new backend in the current session so /resume restores it.
+        _log_memory_backend_to_session(target)
 
         console.print(f"  [{Color.BRAND_ALT}]Switched[/{Color.BRAND_ALT}] {result['from']} -> {result['to']}")
         if result.get("migration"):
@@ -1924,7 +2104,11 @@ def _cmd_memory(args: str) -> None:
         return
 
     # Default: /memory or /memory status — show current backend info
-    status = backend_status()
+    # Scope to the active connection (+ "shared") unless the user
+    # explicitly passes /memory all.
+    show_all = subcommand in ("all", "*")
+    active_conn = None if show_all else _state.get("active_connection")
+    status = backend_status(connection=active_conn)
     size = status.get("size", 0)
     if size >= 1024 * 1024:
         size_str = f"{size / (1024 * 1024):.1f} MB"
@@ -1940,13 +2124,14 @@ def _cmd_memory(args: str) -> None:
     table.add_column(style="dim", width=14)
     table.add_column(style=Color.BRAND_ALT)
     table.add_row("Backend", status["name"])
+    table.add_row("Scope", active_conn or "all connections")
     table.add_row("Entries", str(status.get("entries", 0)))
     table.add_row("Size", size_str)
     table.add_row("Healthy", "[green]yes[/green]" if status.get("healthy") else "[red]no[/red]")
     console.print()
     console.print(table)
     console.print(
-        "  [dim]Usage: /memory switch <native|mempalace> | /memory migrate | /memory status[/dim]\n"
+        "  [dim]Usage: /memory [all] | /memory switch <native|mempalace> | /memory migrate | /memory status[/dim]\n"
     )
 
 

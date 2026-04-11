@@ -99,10 +99,20 @@ class NativeMemoryBackend:
     async def list_all(
         self, connection: str | None = None
     ) -> list[dict[str, Any]]:
-        """List all knowledge entries."""
-        if connection:
-            return list_table_knowledge(connection)
-        return list_knowledge_files()
+        """List knowledge entries.
+
+        When a connection is given, results are scoped to that connection
+        plus any entries stored under the "shared" pseudo-connection
+        (loose .md files at the knowledge root) so cross-database
+        glossaries and notes remain visible.
+        """
+        if not connection:
+            return list_knowledge_files()
+        allowed = {connection, "shared"}
+        return [
+            e for e in list_knowledge_files()
+            if e.get("connection") in allowed
+        ]
 
     async def load_for_context(
         self, connection: str, table_names: list[str]
@@ -141,13 +151,17 @@ class NativeMemoryBackend:
 
         return {"migrated": migrated, "errors": errors}
 
-    def status(self) -> dict[str, Any]:
-        """Return backend status."""
-        all_files = list_knowledge_files()
-        total_size = sum(f.get("size", 0) for f in all_files)
+    def status(self, connection: str | None = None) -> dict[str, Any]:
+        """Return backend status, optionally scoped to a connection."""
+        files = list_knowledge_files()
+        if connection:
+            allowed = {connection, "shared"}
+            files = [f for f in files if f.get("connection") in allowed]
+        total_size = sum(f.get("size", 0) for f in files)
         return {
             "name": self.name,
-            "entries": len(all_files),
+            "entries": len(files),
             "size": total_size,
             "healthy": True,
+            "scope": connection or "all",
         }

@@ -28,6 +28,7 @@ class SessionWriter:
     def __init__(self, connection_name: str = "no-db") -> None:
         date_str = datetime.now().strftime("%Y-%m-%d")
         hex_str = token_hex(2)  # 4 hex chars
+        self._connection_name = connection_name
         self.filename = f"{date_str}_{connection_name}_{hex_str}.jsonl"
         self.path = sessions_dir() / self.filename
         self.session_id = f"{date_str}_{hex_str}"
@@ -41,6 +42,42 @@ class SessionWriter:
                 "role": "system",
                 "session_id": self.session_id,
             })
+            # Persist the active connection explicitly so /resume can
+            # auto-reconnect even if the session never executed a query.
+            if self._connection_name and self._connection_name != "no-db":
+                self._write_event({
+                    "event": "db_connected",
+                    "role": "system",
+                    "connection": self._connection_name,
+                })
+
+    def log_db_connected(self, connection_name: str) -> None:
+        """Record that the user connected (or switched) to a DB.
+
+        Called when the active connection changes mid-session so /resume
+        can land on the most recent connection.
+        """
+        if not connection_name or connection_name == "no-db":
+            return
+        self._write_event({
+            "event": "db_connected",
+            "role": "system",
+            "connection": connection_name,
+        })
+
+    def log_memory_backend(self, backend_name: str) -> None:
+        """Record which memory backend is active (native, mempalace, ...).
+
+        Called at session start and every /memory switch so /resume can
+        restore the same backend the user was using previously.
+        """
+        if not backend_name:
+            return
+        self._write_event({
+            "event": "memory_backend",
+            "role": "system",
+            "backend": backend_name,
+        })
 
     def _write_event(self, event: dict[str, Any]) -> None:
         """Append one event to the JSONL file."""
@@ -250,6 +287,7 @@ def read_session(filepath: str) -> dict[str, Any]:
     user_messages = []
     assistant_messages = []
     connection = None
+    memory_backend: str | None = None
     query_count = 0
     last_ts = ""
 
@@ -269,8 +307,18 @@ def read_session(filepath: str) -> dict[str, Any]:
                     assistant_messages.append(ev.get("content", ""))
                 elif ev.get("event") == "query_executed":
                     query_count += 1
-                    if ev.get("connection") and not connection:
+                    # Prefer the most recent connection seen, so sessions
+                    # that switched DBs resume on the last one.
+                    if ev.get("connection"):
                         connection = ev["connection"]
+                elif ev.get("event") == "db_connected":
+                    if ev.get("connection"):
+                        connection = ev["connection"]
+                elif ev.get("event") == "memory_backend":
+                    # Most recent wins, so mid-session /memory switch
+                    # is respected on /resume.
+                    if ev.get("backend"):
+                        memory_backend = ev["backend"]
             except Exception:
                 pass
 
@@ -285,6 +333,7 @@ def read_session(filepath: str) -> dict[str, Any]:
         "assistant_messages": assistant_messages,
         "summary": summary,
         "connection": connection,
+        "memory_backend": memory_backend,
         "query_count": query_count,
         "last_ts": last_ts,
     }
