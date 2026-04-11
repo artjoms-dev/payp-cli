@@ -10,6 +10,7 @@ Runs Python code in a subprocess for:
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
 import tempfile
@@ -57,18 +58,31 @@ class PythonExecTool(BaseTool):
         }
 
     async def call(self, args: dict[str, Any], context: dict[str, Any]) -> ToolResult:
-        # Gate on python-analytics skill being active
+        # Gate on python-analytics skill being active. FAIL-CLOSED: if the
+        # context has no skill registry at all (e.g. MCP headless mode),
+        # refuse unless an explicit env var opts in.
         skills = context.get("skills")
-        if skills is not None and hasattr(skills, "is_active"):
-            if not skills.is_active("python-analytics"):
+        if skills is None:
+            if not os.environ.get("PAYP_DANGEROUS_UNGATED_CODE_EXEC"):
                 return ToolResult(
                     success=False,
                     error=(
-                        "Python execution is disabled. Activate the 'python-analytics' "
-                        "skill via /skills to enable it."
+                        "Python execution is disabled in this environment "
+                        "(no skill registry available). In MCP/headless mode "
+                        "set PAYP_DANGEROUS_UNGATED_CODE_EXEC=1 on the server "
+                        "to acknowledge the risk and allow code execution."
                     ),
-                    summary="execute_python blocked: skill not active",
+                    summary="execute_python blocked: fail-closed (no skill registry)",
                 )
+        elif hasattr(skills, "is_active") and not skills.is_active("python-analytics"):
+            return ToolResult(
+                success=False,
+                error=(
+                    "Python execution is disabled. Activate the 'python-analytics' "
+                    "skill via /skills to enable it."
+                ),
+                summary="execute_python blocked: skill not active",
+            )
 
         code = args.get("code", "").strip()
         if not code:

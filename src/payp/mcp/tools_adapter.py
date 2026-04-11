@@ -1,5 +1,9 @@
 """Adapter: convert payp tools to MCP tool format and back.
 
+The tool CATALOG lives in `payp.tools.registry` — this module is only
+responsible for type conversion between payp.ToolResult and MCP's
+TextContent/Tool types.
+
 Bridges:
 - payp.tools.base.BaseTool  <->  mcp.types.Tool
 - payp.tools.base.ToolResult <->  list[mcp.types.TextContent]
@@ -13,56 +17,23 @@ from typing import Any
 import mcp.types as mcp_types
 
 from payp.tools.base import BaseTool, ToolRegistry, ToolResult
-from payp.tools.chart import ChartTool
-from payp.tools.explain import ExplainTool
-from payp.tools.export import ExportTool
-from payp.tools.help_tool import PaypHelpTool
-from payp.tools.knowledge import (
-    AppendKnowledgeTool,
-    ListKnowledgeTool,
-    ReadKnowledgeTool,
-    WriteKnowledgeTool,
-)
-from payp.tools.queries import (
-    DeleteQueryTool,
-    ListQueriesTool,
-    LoadQueryTool,
-    SaveQueryTool,
-)
-from payp.tools.query import QueryTool
-from payp.tools.schema import CheckCascadeTool, SchemaLookupTool, SchemaSearchTool
-from payp.tools.snapshot import (
-    DeleteSnapshotTool,
-    ListSnapshotsTool,
-    RestoreSnapshotTool,
-    SnapshotBeforeDeleteTool,
-)
+from payp.tools.registry import build_mcp_registry
 
 
-def build_payp_registry() -> ToolRegistry:
-    """Build a registry containing all payp tools (same as ChatSession)."""
-    reg = ToolRegistry()
-    reg.register(QueryTool())
-    reg.register(ExplainTool())
-    reg.register(SchemaLookupTool())
-    reg.register(SchemaSearchTool())
-    reg.register(CheckCascadeTool())
-    reg.register(SnapshotBeforeDeleteTool())
-    reg.register(RestoreSnapshotTool())
-    reg.register(ListSnapshotsTool())
-    reg.register(DeleteSnapshotTool())
-    reg.register(ExportTool())
-    reg.register(PaypHelpTool())
-    reg.register(ReadKnowledgeTool())
-    reg.register(WriteKnowledgeTool())
-    reg.register(AppendKnowledgeTool())
-    reg.register(ListKnowledgeTool())
-    reg.register(SaveQueryTool())
-    reg.register(ListQueriesTool())
-    reg.register(LoadQueryTool())
-    reg.register(DeleteQueryTool())
-    reg.register(ChartTool())
-    return reg
+def build_payp_registry(
+    *,
+    mode: str = "manual",
+    allow_code_exec: bool = False,
+) -> ToolRegistry:
+    """Build the MCP-facing registry. Delegates to the shared catalog.
+
+    Args:
+        mode: "manual" (default) or "yolo" — used by server.py to choose
+            which destructive tools to block at call time.
+        allow_code_exec: Expose execute_python/r/shell over MCP. Gated
+            further inside each tool by PAYP_DANGEROUS_UNGATED_CODE_EXEC.
+    """
+    return build_mcp_registry(mode=mode, allow_code_exec=allow_code_exec)
 
 
 def payp_tool_to_mcp(tool: BaseTool) -> mcp_types.Tool:
@@ -74,7 +45,8 @@ def payp_tool_to_mcp(tool: BaseTool) -> mcp_types.Tool:
     if "type" not in schema:
         schema = {"type": "object", **schema}
 
-    # Annotate description with safety metadata
+    # Annotate description with safety metadata so the client LLM sees
+    # the tool's risk level at a glance.
     desc = tool.description
     if getattr(tool, "is_destructive", False):
         desc = f"[DESTRUCTIVE] {desc}"

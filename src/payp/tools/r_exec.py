@@ -10,6 +10,7 @@ Runs R code for:
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shutil
 import tempfile
@@ -56,18 +57,30 @@ class RExecTool(BaseTool):
         }
 
     async def call(self, args: dict[str, Any], context: dict[str, Any]) -> ToolResult:
-        # Gate on r-analytics skill being active
+        # Gate on r-analytics skill being active. FAIL-CLOSED: no registry
+        # → refuse unless the operator explicitly opts in.
         skills = context.get("skills")
-        if skills is not None and hasattr(skills, "is_active"):
-            if not skills.is_active("r-analytics"):
+        if skills is None:
+            if not os.environ.get("PAYP_DANGEROUS_UNGATED_CODE_EXEC"):
                 return ToolResult(
                     success=False,
                     error=(
-                        "R execution is disabled. Activate the 'r-analytics' "
-                        "skill via /skills to enable it."
+                        "R execution is disabled in this environment "
+                        "(no skill registry available). In MCP/headless mode "
+                        "set PAYP_DANGEROUS_UNGATED_CODE_EXEC=1 on the server "
+                        "to acknowledge the risk and allow code execution."
                     ),
-                    summary="execute_r blocked: skill not active",
+                    summary="execute_r blocked: fail-closed (no skill registry)",
                 )
+        elif hasattr(skills, "is_active") and not skills.is_active("r-analytics"):
+            return ToolResult(
+                success=False,
+                error=(
+                    "R execution is disabled. Activate the 'r-analytics' "
+                    "skill via /skills to enable it."
+                ),
+                summary="execute_r blocked: skill not active",
+            )
 
         # Check Rscript is installed
         rscript = shutil.which("Rscript")

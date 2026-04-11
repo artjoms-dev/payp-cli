@@ -37,8 +37,13 @@ def _server_params(env_extra: dict[str, str] | None = None) -> StdioServerParame
     )
 
 
-async def test_list_tools_exposes_all_payp_tools() -> None:
-    """Server should expose all 20 payp tools plus 3 MCP-specific tools."""
+async def test_list_tools_exposes_current_payp_tools() -> None:
+    """Server should expose the current payp tool catalog minus CLI-only
+    tools, approval-gated tools, and code-execution tools.
+
+    The exact list lives in payp.tools.registry — this test pins the
+    expectations against that registry so they stay in sync.
+    """
     async with stdio_client(_server_params()) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -46,36 +51,86 @@ async def test_list_tools_exposes_all_payp_tools() -> None:
 
             names = {t.name for t in result.tools}
 
-            # MCP-specific
+            # MCP-specific custom tools
             assert "mcp_list_connections" in names
             assert "mcp_connect_database" in names
             assert "mcp_current_connection" in names
 
-            # A sample of payp tools
-            expected = {
+            # Current MCP-exposed payp tools (manual mode, no code exec)
+            expected_present = {
+                # database
                 "execute_sql",
                 "explain_query",
                 "schema_lookup",
                 "schema_search",
                 "check_cascade",
+                "table_stats",
+                # snapshots
                 "snapshot_before_delete",
                 "restore_snapshot",
                 "list_snapshots",
                 "delete_snapshot",
+                # export / help
                 "export_query",
                 "payp_help",
+                # knowledge (write_knowledge IS exposed in MCP — no approval UI)
                 "read_knowledge",
                 "write_knowledge",
-                "append_knowledge",
                 "list_knowledge",
+                "search_knowledge",
+                # query library
                 "save_query",
                 "list_queries",
                 "load_query",
                 "delete_query",
+                # viz / bulk
                 "chart",
+                "dashboard",
+                "bulk_insert",
+                # crossdb
+                "list_active_connections",
+                "switch_connection",
+                "compare_schemas",
+                "compare_data",
+                # networking
+                "fetch_url",
             }
-            missing = expected - names
+            missing = expected_present - names
             assert not missing, f"Missing payp tools: {missing}"
+
+            # MUST be hidden from MCP default manual mode
+            hidden_in_mcp = {
+                # CLI-only
+                "invoke_skill",
+                "list_skills",
+                # require interactive approval
+                "propose_knowledge",
+                "cleanup",
+                # code execution (hidden unless PAYP_MCP_ALLOW_CODE_EXEC=1)
+                "execute_python",
+                "execute_r",
+                "execute_shell",
+                # deleted dead class
+                "append_knowledge",
+            }
+            leaked = hidden_in_mcp & names
+            assert not leaked, f"Hidden tools leaked into MCP: {leaked}"
+
+
+async def test_list_tools_allow_code_exec_exposes_code_tools() -> None:
+    """With PAYP_MCP_ALLOW_CODE_EXEC=1, code exec tools become visible.
+
+    (They still fail-closed at call time unless
+    PAYP_DANGEROUS_UNGATED_CODE_EXEC=1 is also set.)
+    """
+    async with stdio_client(_server_params({"PAYP_MCP_ALLOW_CODE_EXEC": "1"})) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.list_tools()
+            names = {t.name for t in result.tools}
+            assert "execute_python" in names
+            assert "execute_r" in names
+            assert "execute_shell" in names
 
 
 async def test_mcp_list_connections() -> None:

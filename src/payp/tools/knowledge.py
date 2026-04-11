@@ -170,44 +170,6 @@ class WriteKnowledgeTool(BaseTool):
         )
 
 
-class AppendKnowledgeTool(BaseTool):
-    name = "append_knowledge"
-    description = (
-        "Append new information to an existing table's knowledge file. "
-        "Use after user approves a propose_knowledge discovery."
-    )
-    is_read_only = False
-
-    def get_parameters_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "table": {"type": "string"},
-                "connection": {"type": "string"},
-                "content": {"type": "string", "description": "Markdown to append"},
-            },
-            "required": ["table", "content"],
-        }
-
-    async def call(self, args: dict[str, Any], context: dict[str, Any]) -> ToolResult:
-        table = args.get("table", "").strip().lower()
-        content = args.get("content", "")
-        conn_name = args.get("connection", "")
-        if not conn_name:
-            mgr = context.get("connection_manager")
-            conn_name = mgr.profile.name if mgr else ""
-        if not table or not content:
-            return ToolResult(success=False, error="table and content required")
-
-        backend = get_memory_backend()
-        result = await backend.save(conn_name, table, content)
-        return ToolResult(
-            success=True,
-            data={"table": table, "file": result.get("file", "")},
-            summary=f"Appended to {table} knowledge -> {result.get('file', '')}",
-        )
-
-
 class ListKnowledgeTool(BaseTool):
     name = "list_knowledge"
     description = "List all knowledge files, optionally filtered by connection."

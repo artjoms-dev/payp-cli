@@ -134,57 +134,88 @@ def _resolve_security_mode() -> SecurityMode:
         return SecurityMode.MANUAL
 
 
-def _enforce_sql_policy(
+def _resolve_allow_code_exec() -> bool:
+    raw = os.environ.get("PAYP_MCP_ALLOW_CODE_EXEC", "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _enforce_tool_policy(
+    tool: Any,
     tool_name: str,
     args: dict[str, Any],
     mode: SecurityMode,
 ) -> str | None:
-    """Return an error string if the SQL should be blocked under current mode.
+    """Return an error string if the tool call should be blocked.
 
-    Rules (MCP has no interactive approval, so we enforce at the tool layer):
-      - DROP DATABASE / DROP SCHEMA / TRUNCATE: ALWAYS blocked
-      - In MANUAL mode: all DML_WRITE, DDL, GRANT blocked
-      - In YOLO mode: DML/DDL allowed, warn only
-      - SELECT: always allowed
+    Two-layer policy (MCP has no interactive approval):
+
+    1. SQL classification for `execute_sql`:
+       - DROP DATABASE / DROP SCHEMA / TRUNCATE: ALWAYS blocked
+       - MANUAL mode: block DML_WRITE / DDL / GRANT
+       - YOLO mode: allow all except hard-blocks
+       - SELECT: always allowed
+
+    2. Generic destructive-tool check (is_destructive=True):
+       - MANUAL mode: blocked (no approval UI in MCP)
+       - YOLO mode: allowed
     """
-    if tool_name != "execute_sql":
-        return None
-    sql = (args.get("sql") or "").strip()
-    if not sql:
-        return None
-    try:
-        cls = classify_sql(sql)
-    except Exception as e:
-        logger.warning("classify_sql failed: %s", e)
+    # --- Layer 1: SQL classification for execute_sql ---
+    if tool_name == "execute_sql":
+        sql = (args.get("sql") or "").strip()
+        if sql:
+            try:
+                cls = classify_sql(sql)
+            except Exception as e:
+                logger.warning("classify_sql failed: %s", e)
+                cls = None
+
+            if cls is not None:
+                if cls.is_hard_block or cls.category == SqlCategory.HARD_BLOCK:
+                    return (
+                        f"Blocked by payp safety policy: {cls.statement_type}. "
+                        f"{cls.risk_reason or 'Irreversible operation.'} "
+                        f"This operation is blocked over MCP regardless of mode."
+                    )
+                if mode == SecurityMode.MANUAL and cls.category in (
+                    SqlCategory.DML_WRITE,
+                    SqlCategory.DDL,
+                    SqlCategory.GRANT,
+                ):
+                    return (
+                        f"Blocked: {cls.statement_type} requires interactive approval. "
+                        f"MCP runs in MANUAL (read-only) mode by default. "
+                        f"Set PAYP_MCP_MODE=yolo on the server to enable writes, "
+                        f"or run this SQL via the payp interactive CLI."
+                    )
         return None
 
-    # Absolute hard-blocks
-    if cls.is_hard_block or cls.category == SqlCategory.HARD_BLOCK:
+    # --- Layer 2: generic destructive-tool check (non-SQL tools) ---
+    if getattr(tool, "is_destructive", False) and mode == SecurityMode.MANUAL:
         return (
-            f"Blocked by payp safety policy: {cls.statement_type}. "
-            f"{cls.risk_reason or 'Irreversible operation.'} "
-            f"This operation is blocked over MCP regardless of mode."
+            f"Blocked: '{tool_name}' is a destructive operation. "
+            f"MCP has no interactive approval flow in manual mode. "
+            f"Set PAYP_MCP_MODE=yolo on the server to allow, "
+            f"or use this tool via the interactive payp CLI."
         )
 
-    if mode == SecurityMode.MANUAL:
-        if cls.category in (
-            SqlCategory.DML_WRITE,
-            SqlCategory.DDL,
-            SqlCategory.GRANT,
-        ):
-            return (
-                f"Blocked: {cls.statement_type} requires interactive approval. "
-                f"MCP runs in MANUAL (read-only) mode by default. "
-                f"Set PAYP_MCP_MODE=yolo on the server to enable writes, "
-                f"or run this SQL via the payp interactive CLI."
-            )
     return None
 
 
 def build_server(state: ServerState | None = None) -> tuple[Server, ServerState]:
     """Build the MCP server, registering list_tools and call_tool handlers."""
     state = state or ServerState(mode=_resolve_security_mode())
-    registry = build_payp_registry()
+    allow_code_exec = _resolve_allow_code_exec()
+    registry = build_payp_registry(
+        mode=state.mode.value,
+        allow_code_exec=allow_code_exec,
+    )
+    if allow_code_exec:
+        logger.warning(
+            "PAYP_MCP_ALLOW_CODE_EXEC=1 — execute_python/r/shell are exposed. "
+            "These tools ALSO require PAYP_DANGEROUS_UNGATED_CODE_EXEC=1 to "
+            "actually run, since they fail-closed when no skill registry is "
+            "present. Set both to acknowledge the risk."
+        )
     server: Server = Server("payp")
 
     # Precompute MCP tool descriptors for payp tools
@@ -279,7 +310,7 @@ def build_server(state: ServerState | None = None) -> tuple[Server, ServerState]
             )
 
         # Enforce SQL safety policy
-        policy_err = _enforce_sql_policy(name, args, state.mode)
+        policy_err = _enforce_tool_policy(tool, name, args, state.mode)
         if policy_err:
             return error_content(policy_err)
 

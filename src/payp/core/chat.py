@@ -27,44 +27,7 @@ from payp.skills.registry import SkillRegistry, discover_skills
 from payp.storage.sessions import SessionWriter
 from payp.storage.transaction_log import TransactionLog
 from payp.tools.base import BaseTool, ToolRegistry
-from payp.tools.bulk_insert import BulkInsertTool
-from payp.tools.chart import ChartTool
-from payp.tools.crossdb import (
-    CompareDataTool,
-    CompareSchemasTool,
-    ListConnectionsTool,
-    SwitchConnectionTool,
-)
-from payp.tools.dashboard import DashboardTool
-from payp.tools.explain import ExplainTool
-from payp.tools.export import ExportTool
-from payp.tools.help_tool import PaypHelpTool
-from payp.tools.knowledge import (
-    ListKnowledgeTool,
-    ProposeKnowledgeTool,
-    ReadKnowledgeTool,
-    SearchKnowledgeTool,
-)
-from payp.tools.python_exec import PythonExecTool
-from payp.tools.queries import (
-    DeleteQueryTool,
-    ListQueriesTool,
-    LoadQueryTool,
-    SaveQueryTool,
-)
-from payp.tools.query import QueryTool
-from payp.tools.r_exec import RExecTool
-from payp.tools.schema import CheckCascadeTool, SchemaLookupTool, SchemaSearchTool
-from payp.tools.shell_exec import ShellExecTool
-from payp.tools.skills_tool import InvokeSkillTool, ListSkillsTool
-from payp.tools.snapshot import (
-    DeleteSnapshotTool,
-    ListSnapshotsTool,
-    RestoreSnapshotTool,
-    SnapshotBeforeDeleteTool,
-)
-from payp.tools.stats import StatsTool
-from payp.tools.web_fetch import WebFetchTool
+from payp.tools.registry import build_cli_registry
 from payp.ui.approval import ApprovalAction, ask_approval
 from payp.ui.display import display_dml_result, display_query_result
 from payp.ui.streaming import (
@@ -113,46 +76,13 @@ class ChatSession:
         self.tx_log = TransactionLog(session_id=self.session.session_id)
 
     def _build_registry(self) -> ToolRegistry:
-        """Register all available tools."""
-        reg = ToolRegistry()
-        reg.register(QueryTool())
-        reg.register(ExplainTool())
-        reg.register(SchemaLookupTool())
-        reg.register(SchemaSearchTool())
-        reg.register(CheckCascadeTool())
-        reg.register(StatsTool())
-        reg.register(SnapshotBeforeDeleteTool())
-        reg.register(RestoreSnapshotTool())
-        reg.register(ListSnapshotsTool())
-        reg.register(DeleteSnapshotTool())
-        reg.register(ExportTool())
-        reg.register(PaypHelpTool())
-        reg.register(ReadKnowledgeTool())
-        reg.register(ProposeKnowledgeTool())
-        reg.register(ListKnowledgeTool())
-        reg.register(SearchKnowledgeTool())
-        # write_knowledge and append_knowledge are NOT exposed to LLM
-        # — knowledge writing happens only via propose_knowledge → user approval
-        reg.register(SaveQueryTool())
-        reg.register(ListQueriesTool())
-        reg.register(LoadQueryTool())
-        reg.register(DeleteQueryTool())
-        reg.register(ChartTool())
-        reg.register(BulkInsertTool())
-        reg.register(DashboardTool())
-        reg.register(ListConnectionsTool())
-        reg.register(SwitchConnectionTool())
-        reg.register(CompareSchemasTool())
-        reg.register(CompareDataTool())
-        reg.register(InvokeSkillTool())
-        reg.register(ListSkillsTool())
-        reg.register(PythonExecTool())
-        reg.register(RExecTool())
-        reg.register(ShellExecTool())
-        reg.register(WebFetchTool())
-        from payp.tools.cleanup import CleanupTool
-        reg.register(CleanupTool())
-        return reg
+        """Register all available tools for the interactive CLI.
+
+        The catalog lives in `payp.tools.registry` — single source of
+        truth shared with the MCP server. `write_knowledge` is excluded
+        because the CLI uses the propose_knowledge → user approval flow.
+        """
+        return build_cli_registry()
 
     def _build_context(self) -> dict[str, Any]:
         """Build context dict passed to tool calls."""

@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import ipaddress
 import json as json_lib
+import os
 from typing import Any
 from urllib.parse import urlparse
 
@@ -116,18 +117,30 @@ class WebFetchTool(BaseTool):
         }
 
     async def call(self, args: dict[str, Any], context: dict[str, Any]) -> ToolResult:
-        # Gate on web-scraper skill being active
+        # Gate on web-scraper skill being active. FAIL-CLOSED: no registry
+        # → refuse unless operator explicitly allows ungated network access.
         skills = context.get("skills")
-        if skills is not None and hasattr(skills, "is_active"):
-            if not skills.is_active("web-scraper"):
+        if skills is None:
+            if not os.environ.get("PAYP_DANGEROUS_UNGATED_CODE_EXEC"):
                 return ToolResult(
                     success=False,
                     error=(
-                        "Web fetching is disabled. Activate the 'web-scraper' "
-                        "skill via /skills (or invoke_skill) to enable it."
+                        "Web fetch is disabled in this environment "
+                        "(no skill registry available). In MCP/headless mode "
+                        "set PAYP_DANGEROUS_UNGATED_CODE_EXEC=1 on the server "
+                        "to acknowledge the risk and allow network fetches."
                     ),
-                    summary="fetch_url blocked: skill not active",
+                    summary="fetch_url blocked: fail-closed (no skill registry)",
                 )
+        elif hasattr(skills, "is_active") and not skills.is_active("web-scraper"):
+            return ToolResult(
+                success=False,
+                error=(
+                    "Web fetching is disabled. Activate the 'web-scraper' "
+                    "skill via /skills (or invoke_skill) to enable it."
+                ),
+                summary="fetch_url blocked: skill not active",
+            )
 
         url = (args.get("url") or "").strip()
         if not url:

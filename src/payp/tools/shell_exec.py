@@ -11,6 +11,7 @@ Runs shell commands in a subprocess for:
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -58,18 +59,31 @@ class ShellExecTool(BaseTool):
         }
 
     async def call(self, args: dict[str, Any], context: dict[str, Any]) -> ToolResult:
-        # Gate on shell-exec skill being active
+        # Gate on shell-exec skill being active. FAIL-CLOSED: no registry
+        # → refuse unless the operator explicitly opts in. Shell is the
+        # highest-risk tool in the catalog — default-deny in MCP.
         skills = context.get("skills")
-        if skills is not None and hasattr(skills, "is_active"):
-            if not skills.is_active("shell-exec"):
+        if skills is None:
+            if not os.environ.get("PAYP_DANGEROUS_UNGATED_CODE_EXEC"):
                 return ToolResult(
                     success=False,
                     error=(
-                        "Shell execution is disabled. Activate the 'shell-exec' "
-                        "skill via /skills to enable it."
+                        "Shell execution is disabled in this environment "
+                        "(no skill registry available). In MCP/headless mode "
+                        "set PAYP_DANGEROUS_UNGATED_CODE_EXEC=1 on the server "
+                        "to acknowledge the risk and allow shell commands."
                     ),
-                    summary="execute_shell blocked: skill not active",
+                    summary="execute_shell blocked: fail-closed (no skill registry)",
                 )
+        elif hasattr(skills, "is_active") and not skills.is_active("shell-exec"):
+            return ToolResult(
+                success=False,
+                error=(
+                    "Shell execution is disabled. Activate the 'shell-exec' "
+                    "skill via /skills to enable it."
+                ),
+                summary="execute_shell blocked: skill not active",
+            )
 
         command = (args.get("command") or "").strip()
         if not command:
