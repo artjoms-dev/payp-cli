@@ -1,4 +1,4 @@
-"""payp CLI — main entry point and command routing."""
+"""payp CLI — main entry point and command routing (legacy transitional module)."""
 
 from __future__ import annotations
 
@@ -7,14 +7,12 @@ from datetime import UTC
 from typing import Annotated, Any
 
 import typer
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 from payp import __version__
 from payp.config import (
     list_connections,
-    load_config,
     load_connection_profile,
     load_credential,
     load_model_roles,
@@ -41,6 +39,8 @@ from payp.models import (
     ModelProvider,
     SecurityMode,
 )
+
+from payp.cli.state import CommandCancelled, _state, console, get_config
 
 _PERSISTENT_LOOP: asyncio.AbstractEventLoop | None = None
 
@@ -86,11 +86,7 @@ app = typer.Typer(
     no_args_is_help=False,
     add_completion=False,
 )
-console = Console()
 
-
-class CommandCancelled(Exception):
-    """Raised when user presses Esc during a slash command."""
 
 
 def command_prompt(message: str = "", **kwargs) -> str:
@@ -113,25 +109,6 @@ def command_prompt(message: str = "", **kwargs) -> str:
     session.app.timeoutlen = 0.05
     return session.prompt(message, **kwargs)
 
-
-# --- State ---
-
-_state: dict[str, Any] = {
-    "config": None,
-    "active_connection": None,
-    "connection_manager": None,  # ConnectionManager instance
-    "mode": None,
-    "t0": None,  # SchemaIndex
-    "t1": None,  # SchemaCatalog
-    "llm_client": None,  # LLMClient instance
-    "last_select": None,  # {sql, offset, page_size, connection} for /more pagination
-}
-
-
-def get_config() -> AppConfig:
-    if _state["config"] is None:
-        _state["config"] = load_config()
-    return _state["config"]
 
 
 # --- Main entry ---
