@@ -40,6 +40,7 @@ dependencies = [
     "mcp>=1.0",
     "openpyxl>=3.1",
     "pyarrow>=15.0",
+    "motor>=3.3",
 ]
 
 [project.optional-dependencies]
@@ -76,7 +77,7 @@ python_version = "3.11"
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["plotille", "aiomysql", "pyarrow.*", "mempalace.*"]
+module = ["plotille", "aiomysql", "pyarrow.*", "mempalace.*", "motor.*"]
 ignore_missing_imports = true
 
 [dependency-groups]

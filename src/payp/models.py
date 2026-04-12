@@ -13,6 +13,7 @@ class DbType(str, Enum):
     POSTGRESQL = "postgresql"
     MYSQL = "mysql"
     ORACLE = "oracle"
+    MONGODB = "mongodb"
 
 
 class SecurityMode(str, Enum):
