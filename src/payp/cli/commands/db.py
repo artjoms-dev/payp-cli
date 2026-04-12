@@ -85,18 +85,31 @@ def _setup_new_connection() -> None:
     console.print("  1. PostgreSQL")
     console.print("  2. MySQL")
     console.print("  3. Oracle")
+    console.print("  4. MongoDB")
     type_choice = command_prompt("Select type: ").strip()
-    db_type_map = {"1": DbType.POSTGRESQL, "2": DbType.MYSQL, "3": DbType.ORACLE}
+    db_type_map = {
+        "1": DbType.POSTGRESQL,
+        "2": DbType.MYSQL,
+        "3": DbType.ORACLE,
+        "4": DbType.MONGODB,
+    }
     db_type = db_type_map.get(type_choice)
     if not db_type:
         console.print("[red]Invalid selection.[/red]")
         return
 
-    default_ports = {DbType.POSTGRESQL: 5432, DbType.MYSQL: 3306, DbType.ORACLE: 1521}
+    default_ports = {
+        DbType.POSTGRESQL: 5432,
+        DbType.MYSQL: 3306,
+        DbType.ORACLE: 1521,
+        DbType.MONGODB: 27017,
+    }
     default_port = default_ports[db_type]
 
     if db_type == DbType.ORACLE:
         console.print("[dim]Oracle uses your username as the schema[/dim]")
+    if db_type == DbType.MONGODB:
+        console.print("[dim]MongoDB: user auth via 'admin' authSource by default[/dim]")
 
     host = command_prompt("Host: ").strip()
     port_str = command_prompt(f"Port [{default_port}]: ").strip()
