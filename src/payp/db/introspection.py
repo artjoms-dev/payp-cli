@@ -73,6 +73,18 @@ async def discover_t0(conn: ConnectionManager) -> SchemaIndex:
              WHERE owner NOT IN ({excl})
              GROUP BY owner
         """)  # nosec B608
+    elif conn.db_type == DbType.MONGODB:
+        coll_rows = await conn.execute_raw('{"op": "listCollections"}')
+        version_rows = await conn.execute_raw('{"op": "serverInfo"}')
+        version = version_rows[0].get("version", "unknown") if version_rows else "unknown"
+        db_name = conn.profile.database
+        coll_count = len(coll_rows)
+        return SchemaIndex(
+            db_version=f"MongoDB {version}",
+            schemas={db_name: coll_count},
+            view_count=0,
+            total_tables=coll_count,
+        )
     else:
         raise ValueError(f"Unsupported db_type: {conn.db_type}")
 
@@ -130,6 +142,11 @@ async def discover_t1(conn: ConnectionManager) -> SchemaCatalog:
              WHERE owner NOT IN ({excl})
              ORDER BY owner, table_name
         """)  # nosec B608
+    elif conn.db_type == DbType.MONGODB:
+        coll_rows = await conn.execute_raw('{"op": "listCollections"}')
+        db_name = conn.profile.database
+        tables_result: dict[str, list[str]] = {db_name: [row["name"] for row in coll_rows]}
+        return SchemaCatalog(tables=tables_result)
     else:
         raise ValueError(f"Unsupported db_type: {conn.db_type}")
 
@@ -157,6 +174,8 @@ async def discover_t2(conn: ConnectionManager, schema: str, table: str) -> str:
         return await _t2_mysql(conn, schema, table)
     if conn.db_type == DbType.ORACLE:
         return await _t2_oracle(conn, schema.upper(), table.upper())
+    if conn.db_type == DbType.MONGODB:
+        return await _t2_mongo(conn, table)
     raise ValueError(f"Unsupported db_type: {conn.db_type}")
 
 
@@ -304,6 +323,56 @@ async def _t2_oracle(conn: ConnectionManager, schema: str, table: str) -> str:
     return _render_ddl(schema, table, cols, pk_columns, fk_map)
 
 
+async def _t2_mongo(conn: ConnectionManager, collection: str) -> str:
+    """T2 for MongoDB: sample 50 docs to infer schema + list indexes."""
+    import json as _json
+
+    # Sample documents for schema inference
+    sample_rows = await conn.execute_raw(
+        _json.dumps({"op": "sample", "collection": collection, "size": 50})
+    )
+    # Count
+    count_rows = await conn.execute_raw(
+        _json.dumps({"op": "countDocuments", "collection": collection, "filter": {}})
+    )
+    total_docs = count_rows[0].get("count", "?") if count_rows else "?"
+
+    # Infer field types from sampled documents
+    field_types: dict[str, set[str]] = {}
+    for doc in sample_rows:
+        for k, v in doc.items():
+            if k == "_id":
+                continue
+            type_name = type(v).__name__
+            field_types.setdefault(k, set()).add(type_name)
+
+    # Get indexes
+    idx_rows = await conn.execute_raw(
+        _json.dumps({"op": "indexes", "collection": collection})
+    )
+
+    lines = [
+        f"Collection: {collection}  ({total_docs:,} documents)" if isinstance(total_docs, int)
+        else f"Collection: {collection}  ({total_docs} documents)",
+        "",
+        f"Inferred fields (from {len(sample_rows)} sampled docs):",
+    ]
+    for field, types in sorted(field_types.items()):
+        type_str = " | ".join(sorted(types))
+        lines.append(f"  {field:<24} {type_str}")
+
+    if idx_rows:
+        lines.append("")
+        lines.append("Indexes:")
+        for idx in idx_rows:
+            name = idx.get("name", "?")
+            key = idx.get("key", {})
+            unique = "  [unique]" if idx.get("unique") else ""
+            lines.append(f"  {name:<30} {key}{unique}")
+
+    return "\n".join(lines)
+
+
 def _render_ddl(
     schema: str,
     table: str,
@@ -349,6 +418,8 @@ async def discover_t3(conn: ConnectionManager, schema: str, table: str) -> dict[
         return await _t3_mysql(conn, schema, table)
     if conn.db_type == DbType.ORACLE:
         return await _t3_oracle(conn, schema.upper(), table.upper())
+    if conn.db_type == DbType.MONGODB:
+        return await _t3_mongo(conn, table)
     raise ValueError(f"Unsupported db_type: {conn.db_type}")
 
 
@@ -557,6 +628,26 @@ async def _t3_oracle(conn: ConnectionManager, schema: str, table: str) -> dict[s
     return result
 
 
+async def _t3_mongo(conn: ConnectionManager, collection: str) -> dict[str, Any]:
+    """T3 for MongoDB: collection stats and index details."""
+    import json as _json
+
+    stats_rows = await conn.execute_raw(
+        _json.dumps({"op": "collStats", "collection": collection})
+    )
+    idx_rows = await conn.execute_raw(
+        _json.dumps({"op": "indexes", "collection": collection})
+    )
+    stats = stats_rows[0] if stats_rows else {}
+    return {
+        "count": stats.get("count", 0),
+        "size": stats.get("size", 0),
+        "avgObjSize": stats.get("avgObjSize", 0),
+        "storageSize": stats.get("storageSize", 0),
+        "indexes": idx_rows,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Column type formatting + metadata + context formatters
 # ---------------------------------------------------------------------------
@@ -599,6 +690,16 @@ async def get_db_metadata(conn: ConnectionManager) -> dict[str, Any]:
             meta["username"] = rows[0]["username"]
         meta["db_size"] = "unknown"
         meta["uptime"] = "unknown"
+        meta["is_superuser"] = False
+    elif conn.db_type == DbType.MONGODB:
+        stats_rows = await conn.execute_raw('{"op": "dbStats"}')
+        stats = stats_rows[0] if stats_rows else {}
+        version_rows = await conn.execute_raw('{"op": "serverInfo"}')
+        version = version_rows[0].get("version", "unknown") if version_rows else "unknown"
+        meta["db_version"] = f"MongoDB {version}"
+        meta["db_size"] = f"{stats.get('dataSize', 0) // 1024} KB"
+        meta["username"] = conn.profile.username or ""
+        meta["uptime"] = "see server logs"
         meta["is_superuser"] = False
 
     return meta
