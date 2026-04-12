@@ -1,4 +1,4 @@
-"""Multi-dialect smoke test: Postgres, MySQL, Oracle.
+"""Multi-dialect smoke test: Postgres, MySQL, Oracle, MongoDB.
 
 Run directly:
 
@@ -10,6 +10,7 @@ Containers should be running (`docker compose up -d`).
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import traceback
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ class TargetDB:
     credential: ConnectionCredential
     t2_schema: str
     t2_table: str
+    test_sql: str = "SELECT * FROM customers"
 
 
 TARGETS: list[TargetDB] = [
@@ -77,6 +79,21 @@ TARGETS: list[TargetDB] = [
         t2_schema="PAYP",
         t2_table="CUSTOMERS",
     ),
+    TargetDB(
+        label="MongoDB",
+        profile=ConnectionProfile(
+            name="mongo-local",
+            db_type=DbType.MONGODB,
+            host="localhost",
+            port=27017,
+            database="payp_test",
+            username="payp",
+        ),
+        credential=ConnectionCredential(password="payp_dev"),
+        t2_schema="payp_test",
+        t2_table="customers",
+        test_sql=json.dumps({"op": "find", "collection": "customers", "filter": {}, "limit": 3}),
+    ),
 ]
 
 
@@ -102,8 +119,8 @@ async def run_one(target: TargetDB) -> tuple[str, bool, str]:
         print(f"\n  T2 DDL for {target.t2_schema}.{target.t2_table}:")
         print("  " + ddl.replace("\n", "\n  "))
 
-        result = await conn.execute("SELECT * FROM customers", limit=3)
-        print("\n  SELECT * FROM customers LIMIT 3:")
+        result = await conn.execute(target.test_sql, limit=3)
+        print(f"\n  Query: {target.test_sql[:60]}...")
         print(f"  cols: {result.columns}")
         for row in result.rows:
             print(f"  {row}")

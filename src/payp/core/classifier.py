@@ -95,7 +95,7 @@ def _classify_mql(mql: str) -> SqlClassification:
             category=SqlCategory.DML_WRITE,
             statement_type="DELETE",
             has_where=has_filter,
-            risk_reason="" if has_filter else "deleteMany with empty filter - deletes all documents",
+            risk_reason="" if has_filter else "deleteMany with empty filter - deletes all docs",
         )
     # DDL-like
     if op in ("createindex", "dropindex"):

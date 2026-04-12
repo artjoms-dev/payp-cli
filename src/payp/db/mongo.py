@@ -9,7 +9,6 @@ from typing import Any
 
 from payp.models import ConnectionCredential, ConnectionProfile, QueryResult
 
-
 _MONGO_CONN_MARKERS = (
     "connection refused",
     "connection reset",
@@ -154,7 +153,9 @@ class MongoDriver:
         if op == "insertmany":
             documents = doc.get("documents", [])
             result = await coll.insert_many(documents)
-            return [{"acknowledged": result.acknowledged, "inserted_count": len(result.inserted_ids)}]
+            return [
+                {"acknowledged": result.acknowledged, "inserted_count": len(result.inserted_ids)}
+            ]
 
         if op == "insertone":
             document = doc.get("document", {})
