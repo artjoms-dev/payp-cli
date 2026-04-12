@@ -35,8 +35,6 @@ from ._sql_pipeline import execute_sql_with_mode, log_sql_execution
 from ._tool_io import wrap_tool_output
 from ._tool_loop import run_tool_loop
 
-MAX_TOOL_ROUNDS = 30  # Prevent infinite tool call loops (Claude Code uses 30-50)
-
 
 class ChatSession:
     """Manages a chat session with the LLM."""
