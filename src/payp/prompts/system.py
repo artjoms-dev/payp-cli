@@ -295,6 +295,37 @@ DIALECT_HARD_RULES = {
   SELECT 1 FROM dual
   ```
   Or use INSERT INTO ... SELECT with UNION ALL for larger batches.""",
+
+    "mongodb": """\
+- This is a MongoDB connection. DO NOT generate SQL.
+- Generate queries as JSON envelopes (one JSON object per query):
+
+  Find documents:
+    {"op": "find", "collection": "NAME", "filter": {}, "sort": {"field": 1}, "limit": 50, "projection": {"_id": 0}}
+
+  Aggregation pipeline:
+    {"op": "aggregate", "collection": "NAME", "pipeline": [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]}
+
+  Count:
+    {"op": "countDocuments", "collection": "NAME", "filter": {}}
+
+  Distinct values:
+    {"op": "distinct", "collection": "NAME", "key": "fieldName"}
+
+  Insert documents:
+    {"op": "insertMany", "collection": "NAME", "documents": [{...}, {...}]}
+
+  Update:
+    {"op": "updateMany", "collection": "NAME", "filter": {"active": false}, "update": {"$set": {"active": true}}}
+
+  Delete:
+    {"op": "deleteMany", "collection": "NAME", "filter": {"status": "archived"}}
+
+- ObjectId fields: reference as strings in filters: {"_id": "507f1f77bcf86cd799439011"}
+- MongoDB uses $-prefixed operators: $gt, $lt, $in, $regex, $exists, $and, $or
+- Always include a filter in deleteMany/updateMany - empty filter {} affects ALL documents
+- Limit results: use "limit" key in find (not SQL LIMIT)
+- Collection names are case-sensitive""",
 }
 
 
@@ -311,6 +342,9 @@ DIALECT_SYNTAX_NOTES = {
     "oracle": "UPPERCASE identifiers by default, FETCH FIRST N ROWS ONLY (not LIMIT), "
                   "need FROM dual for SELECT without FROM, double-quotes for quoted identifiers, "
                   ":name placeholders, sequences (no AUTO_INCREMENT)",
+    "mongodb": "JSON envelope format (not SQL), collections instead of tables, "
+               "document-level schema (no fixed DDL), $-operator filters, "
+               "aggregation pipeline for complex queries",
 }
 
 
@@ -344,6 +378,7 @@ def _build_active_connections_section(active_connections: list[dict]) -> str:
             "postgresql": "PostgreSQL",
             "mysql": "MySQL",
             "oracle": "Oracle",
+            "mongodb": "MongoDB",
         }.get(db_type, db_type)
         suffix = "  ← default" if is_active else ""
         # Avoid double-prefix: version may already contain the DB name
@@ -369,6 +404,7 @@ def _build_active_connections_section(active_connections: list[dict]) -> str:
             "postgresql": "PostgreSQL",
             "mysql": "MySQL",
             "oracle": "Oracle",
+            "mongodb": "MongoDB",
         }.get(t, t)
         notes = DIALECT_SYNTAX_NOTES.get(t, "")
         lines.append(f"- {type_display} ({names_str}): {notes}")
