@@ -269,7 +269,9 @@ class ChatSession:
             content = f"\n### {section.replace('_', ' ').title()}\n{discovery}"
             result = await backend.save(conn, table, content, section=section)
             location = result.get("file") or result.get("id") or "memory"
-            self.console.print(f"  [bold rgb(180,224,76)]✓ Saved to {location}[/bold rgb(180,224,76)]")
+            self.console.print(
+                f"  [bold rgb(180,224,76)]✓ Saved to {location}[/bold rgb(180,224,76)]"
+            )
             return result
         elif answer == "e":
             # Let user edit before saving
@@ -285,7 +287,9 @@ class ChatSession:
                 content = f"\n### {section.replace('_', ' ').title()}\n{edited}"
                 result = await backend.save(conn, table, content, section=section)
                 location = result.get("file") or result.get("id") or "memory"
-                self.console.print(f"  [bold rgb(180,224,76)]✓ Saved (edited) to {location}[/bold rgb(180,224,76)]")
+                self.console.print(
+                    f"  [bold rgb(180,224,76)]✓ Saved (edited) to {location}[/bold rgb(180,224,76)]"
+                )
                 return result
             except (EOFError, KeyboardInterrupt):
                 self.console.print("  [dim]Cancelled[/dim]")
@@ -368,7 +372,10 @@ class ChatSession:
                 self.console.print(Panel(stdout.strip(), title="stdout", border_style="dim"))
             files = result.data.get("files_mentioned") or []
             if files:
-                self.console.print(f"  [bold rgb(180,224,76)]✓ Files created:[/bold rgb(180,224,76)] {', '.join(files)}")
+                self.console.print(
+                    "  [bold rgb(180,224,76)]✓ Files created:[/bold rgb(180,224,76)] "
+                    f"{', '.join(files)}"
+                )
         elif not result.success and result.data and result.data.get("stderr"):
             self.console.print(
                 Panel(result.data["stderr"][-500:], title="stderr", border_style="red")
@@ -419,7 +426,9 @@ class ChatSession:
 
         # If preview says nothing matches, short-circuit
         if preview.get("total", None) == 0 or (
-            "total" not in preview and not preview.get("items") and "Would remove 0" in (preview.get("summary") or "")
+            "total" not in preview
+            and not preview.get("items")
+            and "Would remove 0" in (preview.get("summary") or "")
         ):
             display_tool_call(self.console, tool_name, args)
             self.console.print(f"  [dim]{preview.get('summary', 'Nothing to do.')}[/dim]")
@@ -820,7 +829,11 @@ class ChatSession:
         """Return current context usage statistics."""
         from payp.core.compaction import count_tokens, get_context_stats
         model = self.llm.get_executor_model()
-        sys_tokens = count_tokens([{"role": "system", "content": system_prompt}], model) if system_prompt else 0
+        sys_tokens = (
+            count_tokens([{"role": "system", "content": system_prompt}], model)
+            if system_prompt
+            else 0
+        )
         return get_context_stats(self.messages, model, system_prompt_tokens=sys_tokens)
 
     async def _auto_compact_if_needed(self, system_prompt: str) -> None:
@@ -927,7 +940,8 @@ class ChatSession:
                         "role": "user",
                         "content": (
                             "You returned an empty response. Please either complete the task, "
-                            "ask me a specific question if you're stuck, or explain what went wrong."
+                            "ask me a specific question if you're stuck, "
+                            "or explain what went wrong."
                         ),
                     })
                     continue  # retry the loop
@@ -1004,7 +1018,8 @@ class ChatSession:
                             skill_name = tc.arguments.get("skill_name", "")
                             try:
                                 self.console.print(
-                                    f"  [dim]↳ activated skill:[/dim] [bold cyan]{skill_name}[/bold cyan]"
+                                    "  [dim]↳ activated skill:[/dim] "
+                                    f"[bold cyan]{skill_name}[/bold cyan]"
                                 )
                             except Exception:
                                 pass
