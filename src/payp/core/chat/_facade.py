@@ -12,13 +12,12 @@ Handles the conversation flow:
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from rich.console import Console
 
 from payp.core.classifier import SqlCategory, classify_sql, statically_hard_blocked
-from payp.core.llm import LLMClient, ToolCall
+from payp.core.llm import LLMClient
 from payp.core.reviewer import Reviewer, Verdict
 from payp.db.connection import ConnectionManager
 from payp.models import SchemaCatalog, SchemaIndex, SecurityMode
@@ -35,6 +34,8 @@ from payp.ui.streaming import (
     display_tool_result,
     stream_response,
 )
+
+from ._tool_io import parse_tool_calls, summarize_tool_response, wrap_tool_output
 
 MAX_TOOL_ROUNDS = 30  # Prevent infinite tool call loops (Claude Code uses 30-50)
 
@@ -128,40 +129,7 @@ class ChatSession:
 
     @staticmethod
     def _wrap_tool_output(tool_name: str, payload: Any) -> str:
-        """Wrap tool results in an XML isolation envelope before sending
-        to the LLM.
-
-        Tool results flow back into the model's context as authoritative
-        text. Any row value in a database can contain strings like
-        "ignore previous instructions" and a confused model may follow
-        them. To raise the bar on this, we:
-
-        1. Wrap the serialized payload in <tool_output> tags with
-           untrusted="true" so the system prompt can reference it.
-        2. Neutralise any inner </tool_output> tokens (identical technique
-           to the reviewer's <untrusted> wrapper).
-        3. Leave the raw values untouched — the model still needs them
-           to answer the user's question. This is isolation, not
-           sanitisation.
-        """
-        body = json.dumps(payload, default=str)
-        # Neutralise escape attempts — if a row value contains our
-        # closing tag verbatim, swap angle brackets for look-alikes.
-        body = re.sub(
-            r"</?\s*tool_output\b[^>]*>",
-            lambda m: m.group(0).replace("<", "⟨").replace(">", "⟩"),
-            body,
-            flags=re.IGNORECASE,
-        )
-        # Sanitise the tool_name attribute to prevent attribute-injection
-        # via malicious tool names (shouldn't happen from a registry, but
-        # defense-in-depth is cheap).
-        safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", tool_name)[:64]
-        return (
-            f'<tool_output tool="{safe_name}" untrusted="true">\n'
-            f"{body}\n"
-            f"</tool_output>"
-        )
+        return wrap_tool_output(tool_name, payload)
 
     def _log_sql_execution(
         self,
@@ -948,7 +916,7 @@ class ChatSession:
                 break
 
             # Process tool calls
-            tool_calls = _parse_tool_calls(raw_tool_calls)
+            tool_calls = parse_tool_calls(raw_tool_calls)
 
             # Add assistant message with tool calls to history
             assistant_msg: dict[str, Any] = {
@@ -1036,7 +1004,7 @@ class ChatSession:
                         _tc_sum = str(tool_response.get("error", ""))[:200]
                     else:
                         _tc_ok = True
-                        _tc_sum = _summarize_tool_response(tc.name, tool_response)
+                        _tc_sum = summarize_tool_response(tc.name, tool_response)
                     self.session.log_tool_call(
                         tool_name=tc.name,
                         args=tc.arguments,
@@ -1072,56 +1040,3 @@ class ChatSession:
             )
 
         # Done
-
-
-def _summarize_tool_response(tool_name: str, response: Any) -> str:
-    """Build a compact one-line summary of a tool response for session logs.
-
-    Kept free of the actual payload so session files stay small — the row
-    data itself is intentionally not persisted.
-    """
-    if not isinstance(response, dict):
-        return f"{tool_name}: ok"
-    d = response
-    # execute_sql-style results
-    if "row_count" in d or "rows_affected" in d or "execution_ms" in d:
-        rows = d.get("row_count")
-        if rows is None:
-            rows = d.get("rows_affected")
-        ms = d.get("execution_ms")
-        bits = []
-        if rows is not None:
-            bits.append(f"{rows} row{'s' if rows != 1 else ''}")
-        if ms is not None:
-            bits.append(f"{ms}ms")
-        if bits:
-            return ", ".join(bits)
-    # propose_knowledge + chart tools often return a small descriptor
-    if "table" in d and "section" in d:
-        return f"knowledge proposal for {d.get('table')}"
-    if "chart_type" in d or "points" in d:
-        pts = d.get("points") or d.get("point_count")
-        t = d.get("chart_type", "chart")
-        return f"{t} rendered" + (f" ({pts} points)" if pts else "")
-    if "saved" in d and d.get("saved"):
-        return f"saved → {d.get('file') or d.get('id') or 'memory'}"
-    if "count" in d:
-        return f"{d['count']} item(s)"
-    return f"{tool_name}: ok"
-
-
-def _parse_tool_calls(raw_calls: list[dict]) -> list[ToolCall]:
-    """Parse raw tool call dicts from streaming into ToolCall objects."""
-    result = []
-    for raw in raw_calls:
-        try:
-            arguments = json.loads(raw.get("arguments", "{}"))
-        except json.JSONDecodeError:
-            arguments = {}
-
-        result.append(ToolCall(
-            id=raw.get("id", ""),
-            name=raw.get("name", ""),
-            arguments=arguments,
-        ))
-    return result
