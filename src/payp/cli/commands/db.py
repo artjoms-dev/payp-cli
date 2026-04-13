@@ -66,13 +66,14 @@ def _cmd_db(args: str) -> None:
 
     console.print(table)
     console.print(
-        f"\n[dim]Enter connection number, name, or [/dim]"
-        f"[{Color.BRAND_ALT}]new[/{Color.BRAND_ALT}][dim] to add one.[/dim]"
+        f"\n[dim]Enter connection number, name, [/dim]"
+        f"[{Color.BRAND_ALT}]new[/{Color.BRAND_ALT}][dim] to add, or [/dim]"
+        f"[red]del[/red][dim] to remove.[/dim]"
     )
 
-    # Build a single option map: digits, names (lower), and "new" all map to
-    # the action we want to take. prompt_choice loops until one is picked.
-    options: dict[str, str] = {"new": "__new__"}
+    # Build a single option map: digits, names (lower), "new", and "del" all
+    # map to the action we want to take. prompt_choice loops until one is picked.
+    options: dict[str, str] = {"new": "__new__", "del": "__del__"}
     for i, name in enumerate(connections, 1):
         options[str(i)] = name
         options[name.lower()] = name
@@ -80,6 +81,8 @@ def _cmd_db(args: str) -> None:
 
     if action == "__new__":
         _setup_new_connection()
+    elif action == "__del__":
+        _delete_connection()
     else:
         _cmd_db(action)
 
@@ -163,6 +166,68 @@ def _setup_new_connection() -> None:
     console.print(f"\n[{Color.BRAND_ALT}]Connection '{conn_name}' saved.[/{Color.BRAND_ALT}]")
 
     _run_async(_connect_to_db(conn_name, profile, credential))
+
+
+def _delete_connection() -> None:
+    """Interactive wizard to delete a saved connection."""
+    from rich.table import Table
+
+    from payp.config import delete_connection, list_connections, load_connection_profile
+    from payp.db.cache import clear_connection_cache
+    from payp.ui.theme import Color
+
+    connections = list_connections()
+    if not connections:
+        console.print("[yellow]No connections to delete.[/yellow]")
+        return
+
+    if len(connections) == 1:
+        target_name = connections[0]
+    else:
+        table = Table(title=f"[{Color.BRAND}]Delete Connection — Select[/{Color.BRAND}]")
+        table.add_column("#", style="dim")
+        table.add_column("Name", style="bold")
+        table.add_column("Type")
+        table.add_column("Host")
+        for i, name in enumerate(connections, 1):
+            profile = load_connection_profile(name)
+            if profile:
+                table.add_row(str(i), name, profile.db_type.value, profile.host)
+        console.print(table)
+        options: dict[str, str] = {}
+        for i, name in enumerate(connections, 1):
+            options[str(i)] = name
+            options[name.lower()] = name
+        try:
+            target_name = prompt_choice("Select connection to delete: ", options)
+        except (KeyboardInterrupt, EOFError):
+            console.print("[dim]Cancelled.[/dim]")
+            return
+
+    profile = load_connection_profile(target_name)
+    hint = f" ({profile.db_type.value} @ {profile.host})" if profile else ""
+    if not prompt_confirm(f"Delete '{target_name}'{hint}?", default=False):
+        console.print("[dim]Cancelled.[/dim]")
+        return
+
+    # Disconnect if this is the active connection
+    active_name = _state.get("active_connection")
+    if active_name == target_name:
+        console.print(f"[yellow]Disconnecting from active connection '{target_name}'...[/yellow]")
+        _state.pop("active_connection", None)
+        _state.pop("connection_manager", None)
+        _state.pop("t0", None)
+        _state.pop("t1", None)
+        _state.pop("fk_graph", None)
+        mc = _state.get("multi_conn_manager")
+        if mc:
+            mc._connections.pop(target_name, None)
+            if mc._active == target_name:
+                mc._active = None
+
+    delete_connection(target_name)
+    clear_connection_cache(target_name)
+    console.print(f"[{Color.BRAND_ALT}]Connection '{target_name}' deleted.[/{Color.BRAND_ALT}]")
 
 
 def _cmd_credentials(args: str) -> None:
