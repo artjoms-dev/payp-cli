@@ -167,4 +167,7 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        # psycopg3 async requires a selector loop on Windows
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     sys.exit(asyncio.run(main()))
