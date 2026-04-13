@@ -18,6 +18,7 @@ def _cmd_help() -> None:
         ]),
         ("AI", [
             ("/models", "manage AI providers"),
+            ("/models check [openrouter]", "verify key and show usage/balance"),
             ("/mode", "show or set security mode"),
             ("/skills", "browse available workflows"),
         ]),
