@@ -125,8 +125,26 @@ def _setup_new_connection() -> None:
     )
     database_label = "Service Name (PDB): " if db_type == DbType.ORACLE else "Database: "
     database = prompt_required(database_label)
-    username = prompt_required("Username: ")
-    password = command_prompt("Password: ", is_password=True)
+
+    # Auth is optional: localhost dev setups often run without auth
+    # (MongoDB anonymous, Postgres trust, MySQL skip-grant-tables). When
+    # the user opts out we leave username/password empty — drivers will
+    # then build a connection URI without credentials.
+    console.print(
+        "[dim]Auth: leave off for localhost dev setups without a password "
+        "(Mongo anonymous, Postgres trust, etc).[/dim]"
+    )
+    if prompt_confirm("Use authentication (username + password)?", default=True):
+        username = prompt_required("Username: ")
+        password = command_prompt("Password: ", is_password=True)
+        if not password:
+            console.print(
+                "[yellow]No password entered. The server may reject the "
+                "connection if it expects one.[/yellow]"
+            )
+    else:
+        username = ""
+        password = ""
     conn_name = prompt_required("Connection name: ")
 
     profile = ConnectionProfile(
@@ -329,9 +347,22 @@ async def _connect_to_db(
             with console.status(f"Connecting to {name}..."):
                 version = await mgr.connect()
     except (ConnError, OSError, Exception) as e:
-        console.print(f"[red]✗ Connection failed:[/red] {e}")
+        from rich.panel import Panel
+        short_error = str(e).split(", full error:", 1)[0].strip()
+        body = (
+            f"[red]{short_error}[/red]\n\n"
+            "[yellow]Check host, port, credentials, and that the "
+            "database is reachable.[/yellow]"
+        )
+        console.print()
         console.print(
-            "[dim]Check host, port, credentials, and that the database is reachable.[/dim]"
+            Panel(
+                body,
+                title="[bold red]Connection failed[/bold red]",
+                border_style="red",
+                padding=(1, 2),
+                expand=True,
+            )
         )
         return
 
@@ -348,54 +379,115 @@ async def _connect_to_db(
     _state["connection_manager"] = mgr
     console.print(f"[{Color.BRAND_ALT}]Connected to {name} ({version})[/{Color.BRAND_ALT}]")
 
-    if has_cache(name):
-        cached_count = get_cached_table_count(name)
-        t0 = await discover_t0(mgr)
-        current_count = t0.total_tables
+    try:
+        if has_cache(name):
+            cached_count = get_cached_table_count(name)
+            t0 = await discover_t0(mgr)
+            current_count = t0.total_tables
 
-        if cached_count != current_count:
-            console.print(
-                f"[yellow]Schema changed since last session "
-                f"({cached_count} → {current_count} tables). "
-                f"Run /schema --refresh for details.[/yellow]"
-            )
+            if cached_count != current_count:
+                console.print(
+                    f"[yellow]Schema changed since last session "
+                    f"({cached_count} → {current_count} tables). "
+                    f"Run /schema --refresh for details.[/yellow]"
+                )
+                t1 = await discover_t1(mgr)
+                save_t0(name, t0)
+                save_t1(name, t1)
+            else:
+                console.print(
+                    f"[{Color.BRAND_ALT}]Schema cache up to date"
+                    f" ({current_count} tables)[/{Color.BRAND_ALT}]"
+                )
+                from payp.db.cache import load_t1
+                t1 = load_t1(name)
+
+            _state["t0"] = t0
+            _state["t1"] = t1
+        else:
+            console.print("\n[dim]Running initial discovery...[/dim]")
+
+            t0 = await discover_t0(mgr)
             t1 = await discover_t1(mgr)
+            meta = await get_db_metadata(mgr)
+
+            schema_count = len(t0.schemas)
+            plural = "s" if schema_count != 1 else ""
+            tick = f"[{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}]"
+            console.print(f"  {tick} {schema_count} schema{plural} found")
+            console.print(f"  {tick} {t0.total_tables} tables, {t0.view_count} views")
+            uptime = meta.get("uptime", "unknown")
+            db_size = meta.get("db_size", "unknown")
+            console.print(f"  [{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] Server uptime: {uptime}")
+            console.print(f"  [{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] Database size: {db_size}")
+
             save_t0(name, t0)
             save_t1(name, t1)
-        else:
-            console.print(
-                f"[{Color.BRAND_ALT}]Schema cache up to date"
-                f" ({current_count} tables)[/{Color.BRAND_ALT}]"
+            save_metadata(name, meta)
+            console.print(f"  [{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] Schema cache saved")
+
+            _state["t0"] = t0
+            _state["t1"] = t1
+    except Exception as e:
+        from rich.panel import Panel
+        raw = str(e)
+        # MongoDB OperationFailure messages cram the human text and a
+        # "full error: {dict}" dump on one line. The dump is noise at
+        # the CLI level — trim it so the user sees just the sentence.
+        short_error = raw.split(", full error:", 1)[0].strip()
+
+        msg_lower = raw.lower()
+        is_auth = (
+            "requires authentication" in msg_lower
+            or "unauthorized" in msg_lower
+            or "auth" in msg_lower
+        )
+        if is_auth:
+            hint = (
+                "The server rejected an unauthenticated request. "
+                "It looks like this database requires credentials.\n\n"
+                f"[dim]Next steps:[/dim]\n"
+                f"  • [bold]/credentials {name}[/bold] — add username and password\n"
+                "  • [bold]/db[/bold] -> [bold]new[/bold] — recreate with "
+                "authentication enabled"
             )
-            from payp.db.cache import load_t1
-            t1 = load_t1(name)
+        else:
+            hint = (
+                "The connection stayed open but schema metadata could "
+                "not be loaded.\n\n"
+                "[dim]Next step:[/dim] [bold]/schema --refresh[/bold] "
+                "once the underlying issue is resolved."
+            )
 
-        _state["t0"] = t0
-        _state["t1"] = t1
-    else:
-        console.print("\n[dim]Running initial discovery...[/dim]")
-
-        t0 = await discover_t0(mgr)
-        t1 = await discover_t1(mgr)
-        meta = await get_db_metadata(mgr)
-
-        schema_count = len(t0.schemas)
-        plural = "s" if schema_count != 1 else ""
-        tick = f"[{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}]"
-        console.print(f"  {tick} {schema_count} schema{plural} found")
-        console.print(f"  {tick} {t0.total_tables} tables, {t0.view_count} views")
-        uptime = meta.get("uptime", "unknown")
-        db_size = meta.get("db_size", "unknown")
-        console.print(f"  [{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] Server uptime: {uptime}")
-        console.print(f"  [{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] Database size: {db_size}")
-
-        save_t0(name, t0)
-        save_t1(name, t1)
-        save_metadata(name, meta)
-        console.print(f"  [{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}] Schema cache saved")
-
-        _state["t0"] = t0
-        _state["t1"] = t1
+        body = (
+            f"[red]{short_error}[/red]\n\n"
+            f"[yellow]{hint}[/yellow]"
+        )
+        console.print()
+        console.print(
+            Panel(
+                body,
+                title="[bold red]Schema discovery failed[/bold red]",
+                border_style="red",
+                padding=(1, 2),
+                expand=True,
+            )
+        )
+        # Roll the half-initialised connection back so the user does not
+        # end up chatting with a DB we could not introspect.
+        if mc and mc.has(name):
+            mc._connections.pop(name, None)
+            if mc._active == name:
+                mc._active = None
+        _state.pop("active_connection", None)
+        _state.pop("connection_manager", None)
+        _state.pop("t0", None)
+        _state.pop("t1", None)
+        try:
+            await mgr.disconnect()
+        except Exception:
+            pass
+        return
 
     mc = _state.get("multi_conn_manager")
     if mc and mc.has(name) and t0 and t1:
