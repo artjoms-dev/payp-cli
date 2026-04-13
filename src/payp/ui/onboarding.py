@@ -7,17 +7,11 @@ Two steps:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from prompt_toolkit import prompt as pt_prompt
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
 
 from payp.ui.theme import Color, section, success
-
-if TYPE_CHECKING:
-    pass
 
 
 def is_first_run() -> bool:
@@ -56,7 +50,13 @@ def run_onboarding(console: Console) -> None:
     """Run the full first-run onboarding flow.
 
     Calls out to existing setup wizards for models and connections.
+    Pressing Esc inside any sub-wizard cancels that step cleanly
+    instead of crashing the CLI.
     """
+    from payp.cli import _setup_new_connection, _setup_new_provider
+    from payp.cli.runtime import prompt_confirm
+    from payp.cli.state import CommandCancelled
+
     render_welcome_banner(console)
 
     # Step 1: Model
@@ -65,10 +65,10 @@ def run_onboarding(console: Console) -> None:
         "[dim]payp needs at least one AI model to generate SQL and "
         "analyze data.[/dim]\n"
     )
-
-    # Import here to avoid circular imports
-    from payp.cli import _setup_new_provider
-    _setup_new_provider()
+    try:
+        _setup_new_provider()
+    except CommandCancelled:
+        console.print("[dim]Skipped. Run [bold]/models add[/bold] later.[/dim]")
 
     console.print()
 
@@ -77,12 +77,12 @@ def run_onboarding(console: Console) -> None:
     console.print(
         "[dim]Connect to a database now, or skip and run /db later.[/dim]\n"
     )
-
-    choice = pt_prompt("Connect a database now? [Y/n]: ").strip().lower()
-    if choice in ("", "y", "yes"):
-        from payp.cli import _setup_new_connection
-        _setup_new_connection()
-    else:
+    try:
+        if prompt_confirm("Connect a database now?", default=True):
+            _setup_new_connection()
+        else:
+            console.print("[dim]Skipped. Run [bold]/db[/bold] when ready.[/dim]")
+    except CommandCancelled:
         console.print("[dim]Skipped. Run [bold]/db[/bold] when ready.[/dim]")
 
     console.print()
@@ -107,5 +107,9 @@ def prompt_model_setup_only(console: Console) -> None:
     console.print()
 
     from payp.cli import _setup_new_provider
-    _setup_new_provider()
+    from payp.cli.state import CommandCancelled
+    try:
+        _setup_new_provider()
+    except CommandCancelled:
+        console.print("[dim]Skipped. Run [bold]/models add[/bold] later.[/dim]")
     console.print()

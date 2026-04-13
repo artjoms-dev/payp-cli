@@ -8,9 +8,12 @@ and command_prompt from here.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, TypeVar
 
-from payp.cli.state import CommandCancelled
+from payp.cli.state import CommandCancelled, console
+
+T = TypeVar("T")
 
 _PERSISTENT_LOOP: asyncio.AbstractEventLoop | None = None
 
@@ -69,3 +72,96 @@ def command_prompt(message: str = "", **kwargs: Any) -> str:
     session.app.ttimeoutlen = 0.05
     session.app.timeoutlen = 0.05
     return session.prompt(message, **kwargs)
+
+
+def _error(msg: str) -> None:
+    console.print(f"[red]{msg}[/red]")
+
+
+def prompt_choice(
+    message: str,
+    options: Mapping[str, T],
+    *,
+    default: str | None = None,
+    case_sensitive: bool = False,
+) -> T:
+    """Loop until the user picks a valid key from ``options``.
+
+    Keys in ``options`` are the valid user inputs (e.g. ``"1"``, ``"2"``
+    or ``"postgres"``, ``"mysql"``). The mapped value is returned. On Esc
+    the command is cancelled via ``CommandCancelled``. Empty input reuses
+    ``default`` if provided.
+    """
+    normalized = {
+        k if case_sensitive else k.lower(): v for k, v in options.items()
+    }
+    valid_keys = ", ".join(options.keys())
+    while True:
+        raw = command_prompt(message).strip()
+        if not raw and default is not None:
+            raw = default
+        key = raw if case_sensitive else raw.lower()
+        if key in normalized:
+            return normalized[key]
+        _error(f"Invalid choice '{raw}'. Valid options: {valid_keys}")
+
+
+def prompt_required(
+    message: str,
+    *,
+    default: str | None = None,
+    is_password: bool = False,
+) -> str:
+    """Loop until the user enters a non-empty value (or accepts ``default``)."""
+    while True:
+        value = command_prompt(message, is_password=is_password).strip()
+        if value:
+            return value
+        if default is not None:
+            return default
+        _error("Value is required.")
+
+
+def prompt_int(
+    message: str,
+    *,
+    default: int | None = None,
+    min_val: int | None = None,
+    max_val: int | None = None,
+) -> int:
+    """Loop until the user enters a valid integer within optional bounds."""
+    while True:
+        raw = command_prompt(message).strip()
+        if not raw and default is not None:
+            return default
+        try:
+            value = int(raw)
+        except ValueError:
+            _error(f"'{raw}' is not a valid integer.")
+            continue
+        if min_val is not None and value < min_val:
+            _error(f"Value must be >= {min_val}.")
+            continue
+        if max_val is not None and value > max_val:
+            _error(f"Value must be <= {max_val}.")
+            continue
+        return value
+
+
+def prompt_confirm(message: str, *, default: bool) -> bool:
+    """Strict y/n prompt. Loops on invalid input.
+
+    ``default`` is used only when the user submits an empty line. The
+    prompt suffix reflects the default (``[Y/n]`` vs ``[y/N]``).
+    """
+    suffix = " [Y/n]: " if default else " [y/N]: "
+    full_message = message.rstrip() + suffix
+    while True:
+        raw = command_prompt(full_message).strip().lower()
+        if not raw:
+            return default
+        if raw in ("y", "yes"):
+            return True
+        if raw in ("n", "no"):
+            return False
+        _error("Please answer 'y' or 'n'.")

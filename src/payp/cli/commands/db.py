@@ -5,7 +5,14 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from payp.cli.runtime import _run_async, command_prompt
+from payp.cli.runtime import (
+    _run_async,
+    command_prompt,
+    prompt_choice,
+    prompt_confirm,
+    prompt_int,
+    prompt_required,
+)
 from payp.cli.state import _state, console
 
 
@@ -63,15 +70,18 @@ def _cmd_db(args: str) -> None:
         f"[{Color.BRAND_ALT}]new[/{Color.BRAND_ALT}][dim] to add one.[/dim]"
     )
 
-    choice = command_prompt("Select: ").strip().lower()
+    # Build a single option map: digits, names (lower), and "new" all map to
+    # the action we want to take. prompt_choice loops until one is picked.
+    options: dict[str, str] = {"new": "__new__"}
+    for i, name in enumerate(connections, 1):
+        options[str(i)] = name
+        options[name.lower()] = name
+    action = prompt_choice("Select: ", options)
 
-    if choice == "new":
+    if action == "__new__":
         _setup_new_connection()
-    elif choice.isdigit() and 1 <= int(choice) <= len(connections):
-        name = connections[int(choice) - 1]
-        _cmd_db(name)
-    elif choice in connections:
-        _cmd_db(choice)
+    else:
+        _cmd_db(action)
 
 
 def _setup_new_connection() -> None:
@@ -86,17 +96,15 @@ def _setup_new_connection() -> None:
     console.print("  2. MySQL")
     console.print("  3. Oracle")
     console.print("  4. MongoDB")
-    type_choice = command_prompt("Select type: ").strip()
-    db_type_map = {
-        "1": DbType.POSTGRESQL,
-        "2": DbType.MYSQL,
-        "3": DbType.ORACLE,
-        "4": DbType.MONGODB,
-    }
-    db_type = db_type_map.get(type_choice)
-    if not db_type:
-        console.print("[red]Invalid selection.[/red]")
-        return
+    db_type = prompt_choice(
+        "Select type: ",
+        {
+            "1": DbType.POSTGRESQL,
+            "2": DbType.MYSQL,
+            "3": DbType.ORACLE,
+            "4": DbType.MONGODB,
+        },
+    )
 
     default_ports = {
         DbType.POSTGRESQL: 5432,
@@ -109,20 +117,17 @@ def _setup_new_connection() -> None:
     if db_type == DbType.ORACLE:
         console.print("[dim]Oracle uses your username as the schema[/dim]")
     if db_type == DbType.MONGODB:
-        console.print("[dim]MongoDB: user auth via 'admin' authSource by default[/dim]")
+        console.print("[dim]MongoDB: user auth uses the target database[/dim]")
 
-    host = command_prompt("Host: ").strip()
-    port_str = command_prompt(f"Port [{default_port}]: ").strip()
-    port = int(port_str) if port_str else default_port
+    host = prompt_required("Host: ")
+    port = prompt_int(
+        f"Port [{default_port}]: ", default=default_port, min_val=1, max_val=65535
+    )
     database_label = "Service Name (PDB): " if db_type == DbType.ORACLE else "Database: "
-    database = command_prompt(database_label).strip()
-    username = command_prompt("Username: ").strip()
-    password = command_prompt("Password: ", is_password=True).strip()
-    conn_name = command_prompt("Connection name: ").strip()
-
-    if not all([host, database, username, conn_name]):
-        console.print("[red]All fields are required.[/red]")
-        return
+    database = prompt_required(database_label)
+    username = prompt_required("Username: ")
+    password = command_prompt("Password: ", is_password=True)
+    conn_name = prompt_required("Connection name: ")
 
     profile = ConnectionProfile(
         name=conn_name,
@@ -174,20 +179,14 @@ def _cmd_credentials(args: str) -> None:
                 table.add_row(str(i), name, profile.db_type.value, profile.host)
         console.print(table)
         console.print("\n[dim]Enter connection number or name.[/dim]")
+        options: dict[str, str] = {}
+        for i, name in enumerate(connections, 1):
+            options[str(i)] = name
+            options[name.lower()] = name
         try:
-            choice = command_prompt("Select: ").strip()
+            target_name = prompt_choice("Select: ", options)
         except (KeyboardInterrupt, EOFError):
             console.print("[yellow]Cancelled, no changes saved.[/yellow]")
-            return
-        if not choice:
-            console.print("[yellow]Cancelled, no changes saved.[/yellow]")
-            return
-        if choice.isdigit() and 1 <= int(choice) <= len(connections):
-            target_name = connections[int(choice) - 1]
-        elif choice in connections:
-            target_name = choice
-        else:
-            console.print(f"[red]Connection '{choice}' not found.[/red]")
             return
 
     profile = load_connection_profile(target_name)
@@ -218,27 +217,20 @@ def _cmd_credentials(args: str) -> None:
     console.print("\n[dim]Press Enter to keep current value.[/dim]\n")
 
     try:
-        host = command_prompt("Host: ", default=profile.host).strip() or profile.host
-        port_str = command_prompt("Port: ", default=str(profile.port)).strip()
-        try:
-            port = int(port_str) if port_str else profile.port
-        except ValueError:
-            console.print(f"[red]Invalid port '{port_str}', keeping {profile.port}.[/red]")
-            port = profile.port
-        database = (
-            command_prompt("Database: ", default=profile.database).strip() or profile.database
+        host = prompt_required("Host: ", default=profile.host)
+        port = prompt_int(
+            "Port: ", default=profile.port, min_val=1, max_val=65535
         )
-        username = (
-            command_prompt("Username: ", default=profile.username).strip() or profile.username
-        )
+        database = prompt_required("Database: ", default=profile.database)
+        username = prompt_required("Username: ", default=profile.username)
 
-        change_pw = command_prompt("Change password? [y/N]: ").strip().lower()
         new_password: str | None = None
-        if change_pw in ("y", "yes"):
-            new_password = command_prompt("New password: ", is_password=True).strip()
-            if not new_password:
+        if prompt_confirm("Change password?", default=False):
+            pw = command_prompt("New password: ", is_password=True).strip()
+            if not pw:
                 console.print("[yellow]Empty password, keeping existing.[/yellow]")
-                new_password = None
+            else:
+                new_password = pw
     except (KeyboardInterrupt, EOFError):
         console.print("\n[yellow]Cancelled, no changes saved.[/yellow]")
         return

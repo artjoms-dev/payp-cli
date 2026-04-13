@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from payp.cli.runtime import command_prompt
+from payp.cli.runtime import prompt_choice, prompt_required
 from payp.cli.state import console
 from payp.config import load_model_roles, load_models_config, save_models_config
 from payp.models import ModelProvider
@@ -54,29 +54,20 @@ def _setup_new_provider() -> None:
     console.print(f"  [{Color.BRAND_ALT}]4.[/{Color.BRAND_ALT}] Google (Gemini)")
     console.print(f"  [{Color.BRAND_ALT}]5.[/{Color.BRAND_ALT}] Ollama (local)")
 
-    choice = command_prompt("Select: ").strip()
-    provider_map = {
+    provider_map: dict[str, tuple[str, str | None]] = {
         "1": ("openrouter", None),
         "2": ("anthropic", None),
         "3": ("openai", None),
         "4": ("gemini", None),
         "5": ("ollama", "http://localhost:11434"),
     }
-
-    if choice not in provider_map:
-        console.print("[red]Invalid selection.[/red]")
-        return
-
-    name, base_url = provider_map[choice]
+    name, base_url = prompt_choice("Select: ", provider_map)
 
     if name == "ollama":
-        url = command_prompt(f"Ollama URL [{base_url}]: ").strip() or base_url
+        url = prompt_required(f"Ollama URL [{base_url}]: ", default=base_url)
         provider = ModelProvider(api_key="ollama", base_url=url)
     else:
-        api_key = command_prompt(f"Enter {name} API key: ", is_password=True).strip()
-        if not api_key:
-            console.print("[red]API key required.[/red]")
-            return
+        api_key = prompt_required(f"Enter {name} API key: ", is_password=True)
         provider = ModelProvider(api_key=api_key)
 
     providers = load_models_config()
