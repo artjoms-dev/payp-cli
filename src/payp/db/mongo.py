@@ -53,7 +53,7 @@ class MongoDriver:
         db_name = self.profile.database
 
         if user:
-            uri = f"mongodb://{user}:{pwd}@{host}:{port}/{db_name}?authSource=admin"
+            uri = f"mongodb://{user}:{pwd}@{host}:{port}/{db_name}?authSource={db_name}"
         else:
             uri = f"mongodb://{host}:{port}/{db_name}"
 
@@ -63,8 +63,7 @@ class MongoDriver:
             connectTimeoutMS=10_000,
         )
         self._db = self._client[db_name]
-        # Ping to verify connection + get version
-        info = await self._client.admin.command("serverStatus")
+        info = await self._db.command({"buildInfo": 1})
         self._version = info.get("version", "unknown")
         return f"MongoDB {self._version}"
 
@@ -96,7 +95,8 @@ class MongoDriver:
             return [{"name": n} for n in sorted(names)]
 
         if op == "serverinfo":
-            info = await self._client.admin.command("serverStatus")
+            # Use buildInfo on the target db — no admin privileges required.
+            info = await db.command({"buildInfo": 1})
             return [{"version": info.get("version", "unknown")}]
 
         if op == "dbstats":
