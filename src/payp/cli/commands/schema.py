@@ -28,6 +28,10 @@ def _cmd_schema(args: str) -> None:
         _run_async(_refresh_schema())
         return
 
+    if args == "--graph":
+        _cmd_schema_graph()
+        return
+
     t0 = _state.get("t0")
     t1 = _state.get("t1")
 
@@ -47,8 +51,14 @@ def _cmd_schema(args: str) -> None:
 
 async def _refresh_schema() -> None:
     """Re-run introspection and update cache."""
-    from payp.db.cache import save_metadata, save_t0, save_t1
-    from payp.db.introspection import discover_t0, discover_t1, get_db_metadata
+    from payp.db.cache import save_fk_graph, save_metadata, save_t0, save_t1
+    from payp.db.introspection import (
+        discover_fk_graph,
+        discover_t0,
+        discover_t1,
+        get_db_metadata,
+        hash_table_names,
+    )
     from payp.ui.theme import Color
 
     name = _state["active_connection"]
@@ -57,17 +67,22 @@ async def _refresh_schema() -> None:
     t0 = await discover_t0(mgr)
     t1 = await discover_t1(mgr)
     meta = await get_db_metadata(mgr)
+    fk_graph = await discover_fk_graph(mgr)
+    fk_graph.table_names_hash = hash_table_names(t1)
 
     save_t0(name, t0)
     save_t1(name, t1)
     save_metadata(name, meta)
+    save_fk_graph(name, fk_graph)
 
     _state["t0"] = t0
     _state["t1"] = t1
+    _state["fk_graph"] = fk_graph
 
     console.print(
         f"[{Color.BRAND_ALT}]Schema cache refreshed."
-        f" {t0.total_tables} tables, {t0.view_count} views.[/{Color.BRAND_ALT}]"
+        f" {t0.total_tables} tables, {t0.view_count} views,"
+        f" {len(fk_graph.edges)} FK relationships.[/{Color.BRAND_ALT}]"
     )
 
 
@@ -87,6 +102,23 @@ async def _show_table_schema(table_name: str) -> None:
 
     ddl = await discover_t2(mgr, schema, table)
     console.print(Syntax(ddl, "sql", theme="monokai"))
+
+
+def _cmd_schema_graph() -> None:
+    """Print the cached FK adjacency graph grouped by source table."""
+    from rich.panel import Panel
+
+    from payp.db.introspection import format_schema_graph_for_context
+
+    fk_graph = _state.get("fk_graph")
+    if fk_graph is None:
+        console.print("[yellow]No FK graph in session. Run /schema --refresh to build it.[/yellow]")
+        return
+    if not fk_graph.edges:
+        console.print("[dim]FK graph is empty — no foreign keys found in this database.[/dim]")
+        return
+    text = format_schema_graph_for_context(fk_graph)
+    console.print(Panel(text, title="FK Graph", border_style="rgb(168,0,111)"))
 
 
 def _cmd_stats(args: str) -> None:

@@ -428,6 +428,22 @@ async def _connect_to_db(
 
             _state["t0"] = t0
             _state["t1"] = t1
+        # FK adjacency graph — built/reloaded here for both paths above
+        from payp.db.cache import load_fk_graph, save_fk_graph
+        from payp.db.introspection import discover_fk_graph, hash_table_names
+        if t1 is not None:
+            new_hash = hash_table_names(t1)
+            fk_graph = load_fk_graph(name)
+            if fk_graph is None or fk_graph.table_names_hash != new_hash:
+                fk_graph = await discover_fk_graph(mgr)
+                fk_graph.table_names_hash = new_hash
+                save_fk_graph(name, fk_graph)
+            tick = f"[{Color.BRAND_ALT}]✓[/{Color.BRAND_ALT}]"
+            console.print(f"  {tick} FK graph: {len(fk_graph.edges)} relationships")
+        else:
+            from payp.models import SchemaGraph
+            fk_graph = SchemaGraph()
+        _state["fk_graph"] = fk_graph
     except Exception as e:
         from rich.panel import Panel
         raw = str(e)

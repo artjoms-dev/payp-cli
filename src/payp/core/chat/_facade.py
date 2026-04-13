@@ -17,7 +17,7 @@ from rich.console import Console
 
 from payp.core.llm import LLMClient
 from payp.db.connection import ConnectionManager
-from payp.models import SchemaCatalog, SchemaIndex, SecurityMode
+from payp.models import SchemaCatalog, SchemaGraph, SchemaIndex, SecurityMode
 from payp.prompts.system import build_system_prompt
 from payp.skills.registry import SkillRegistry, discover_skills
 from payp.storage.sessions import SessionWriter
@@ -47,6 +47,7 @@ class ChatSession:
         mode: SecurityMode = SecurityMode.MANUAL,
         t0: SchemaIndex | None = None,
         t1: SchemaCatalog | None = None,
+        fk_graph: SchemaGraph | None = None,
     ) -> None:
         self.llm = llm
         self.console = console
@@ -54,6 +55,7 @@ class ChatSession:
         self.mode = mode
         self.t0 = t0
         self.t1 = t1
+        self.fk_graph = fk_graph
         self.messages: list[dict[str, Any]] = []
         # Load skills lazily — safe if directories are missing
         try:
@@ -223,6 +225,7 @@ class ChatSession:
             db_type=db_type,
             t0=self.t0,
             t1=self.t1,
+            fk_graph=self.fk_graph,
             t2_context=t2_context if t2_context else None,
             knowledge_dir=get_knowledge_dir(),
             active_connections=active_connections,

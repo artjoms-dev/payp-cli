@@ -103,6 +103,20 @@ class SchemaCatalog(BaseModel):
     tables: dict[str, list[str]]  # schema_name -> [table_names]
 
 
+class SchemaGraph(BaseModel):
+    """FK adjacency graph for the whole database — sits between T1 and T2.
+
+    Built once per connection (or when T1 table list changes) and cached
+    alongside T0/T1. Gives the LLM a full FK map upfront so it can plan
+    multi-table JOINs without per-table tool calls.
+    """
+
+    edges: list[tuple[str, str, str, str]] = []
+    # each edge: (from_schema_table, from_col, to_schema_table, to_col)
+    table_names_hash: str = ""
+    # sha1 of sorted "schema.table" list from T1 — cheap drift detector
+
+
 class CostTracker(BaseModel):
     """Token usage and cost tracking for a session."""
 

@@ -52,6 +52,19 @@ def ensure_project_dir() -> Path:
     return d
 
 
+def project_knowledge_dir() -> Path | None:
+    """Return ./payp/knowledge if it exists, else None.
+
+    Project-local knowledge takes precedence over global ~/.payp/knowledge/
+    when both are present — same resolution order as connection profiles.
+    """
+    proj = project_dir()
+    if proj is None:
+        return None
+    d = proj / "knowledge"
+    return d if d.is_dir() else None
+
+
 # --- App Config ---
 
 
@@ -146,6 +159,14 @@ def save_credential(name: str, credential: ConnectionCredential) -> None:
         tomli_w.dump(data, f)
     # Secure the file: owner read/write only
     path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def delete_connection(name: str) -> None:
+    """Delete a connection profile and its credentials."""
+    for suffix in (".toml", ".cred"):
+        path = connections_dir() / f"{name}{suffix}"
+        if path.exists():
+            path.unlink()
 
 
 # --- Model Providers ---

@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from payp.db.connection import ConnectionManager
-from payp.models import DbType, SchemaCatalog, SchemaIndex
+from payp.models import DbType, SchemaCatalog, SchemaGraph, SchemaIndex
 
 # System schemas we never introspect
 PG_SYSTEM_SCHEMAS = ("pg_catalog", "information_schema", "pg_toast")
@@ -769,4 +769,123 @@ def format_t1_for_context(catalog: SchemaCatalog) -> str:
         lines.append(f"Schema: {schema} ({len(tables)} tables)")
         lines.append(f"  {', '.join(tables)}")
         lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# FK graph — whole-DB foreign key adjacency
+# ---------------------------------------------------------------------------
+
+def hash_table_names(catalog: SchemaCatalog) -> str:
+    """SHA-1 of sorted 'schema.table' names — used as drift detector for the FK graph cache."""
+    import hashlib
+    names = sorted(
+        f"{schema}.{table}"
+        for schema, tables in catalog.tables.items()
+        for table in tables
+    )
+    return hashlib.sha1("|".join(names).encode()).hexdigest()
+
+
+async def discover_fk_graph(conn: ConnectionManager) -> SchemaGraph:
+    """Whole-DB FK adjacency graph — one query per database, all dialects."""
+    if conn.db_type == DbType.POSTGRESQL:
+        return await _fk_graph_postgres(conn)
+    if conn.db_type == DbType.MYSQL:
+        return await _fk_graph_mysql(conn)
+    if conn.db_type == DbType.ORACLE:
+        return await _fk_graph_oracle(conn)
+    if conn.db_type == DbType.MONGODB:
+        # MongoDB has no declared FK constraints
+        return SchemaGraph(edges=[], table_names_hash="")
+    raise ValueError(f"Unsupported db_type: {conn.db_type}")
+
+
+async def _fk_graph_postgres(conn: ConnectionManager) -> SchemaGraph:
+    rows = await conn.execute_raw("""
+        SELECT
+            kcu.table_schema || '.' || kcu.table_name  AS from_table,
+            kcu.column_name                             AS from_col,
+            ccu.table_schema || '.' || ccu.table_name  AS to_table,
+            ccu.column_name                             AS to_col
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema    = kcu.table_schema
+        JOIN information_schema.constraint_column_usage ccu
+          ON tc.constraint_name = ccu.constraint_name
+         AND tc.table_schema    = ccu.table_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND tc.table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+        ORDER BY from_table, from_col
+    """)
+    edges = [
+        (r["from_table"], r["from_col"], r["to_table"], r["to_col"])
+        for r in rows
+    ]
+    return SchemaGraph(edges=edges)
+
+
+async def _fk_graph_mysql(conn: ConnectionManager) -> SchemaGraph:
+    rows = await conn.execute_raw("""
+        SELECT
+            CONCAT(table_schema, '.', table_name)             AS from_table,
+            column_name                                        AS from_col,
+            CONCAT(referenced_table_schema, '.',
+                   referenced_table_name)                      AS to_table,
+            referenced_column_name                             AS to_col
+        FROM information_schema.key_column_usage
+        WHERE referenced_table_name IS NOT NULL
+          AND table_schema NOT IN
+              ('information_schema', 'mysql', 'performance_schema', 'sys')
+        ORDER BY from_table, from_col
+    """)
+    edges = [
+        (r["from_table"], r["from_col"], r["to_table"], r["to_col"])
+        for r in rows
+    ]
+    return SchemaGraph(edges=edges)
+
+
+async def _fk_graph_oracle(conn: ConnectionManager) -> SchemaGraph:
+    excl = _oracle_excl_list()
+    # excl is built from a hardcoded ORACLE_SYSTEM_SCHEMAS tuple
+    rows = await conn.execute_raw(f"""
+        SELECT
+            ac.owner  || '.' || ac.table_name   AS from_table,
+            acc.column_name                       AS from_col,
+            rc.owner  || '.' || rc.table_name    AS to_table,
+            rcc.column_name                       AS to_col
+          FROM all_constraints ac
+          JOIN all_cons_columns acc
+            ON ac.owner = acc.owner
+           AND ac.constraint_name = acc.constraint_name
+          JOIN all_constraints rc
+            ON ac.r_owner = rc.owner
+           AND ac.r_constraint_name = rc.constraint_name
+          JOIN all_cons_columns rcc
+            ON rc.owner = rcc.owner
+           AND rc.constraint_name = rcc.constraint_name
+           AND acc.position = rcc.position
+         WHERE ac.constraint_type = 'R'
+           AND ac.owner NOT IN ({excl})
+         ORDER BY from_table, from_col
+    """)  # nosec B608
+    edges = [
+        (r["from_table"], r["from_col"], r["to_table"], r["to_col"])
+        for r in rows
+    ]
+    return SchemaGraph(edges=edges)
+
+
+def format_schema_graph_for_context(graph: SchemaGraph) -> str:
+    """Format FK graph as compact text for LLM system prompt.
+
+    Output: one line per FK, ~35 chars each.  200 FKs ≈ 7 KB — cheap.
+    """
+    if not graph.edges:
+        return ""
+    lines = [f"### Foreign Key Graph ({len(graph.edges)} relationships)"]
+    for from_table, from_col, to_table, to_col in sorted(graph.edges):
+        lines.append(f"{from_table}.{from_col} -> {to_table}.{to_col}")
     return "\n".join(lines)

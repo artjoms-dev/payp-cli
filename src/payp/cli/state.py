@@ -21,6 +21,7 @@ _state: dict[str, Any] = {
     "mode": None,
     "t0": None,  # SchemaIndex
     "t1": None,  # SchemaCatalog
+    "fk_graph": None,  # SchemaGraph — FK adjacency graph for the whole DB
     "llm_client": None,  # LLMClient instance
     "last_select": None,  # {sql, offset, page_size, connection} for /more pagination
 }

@@ -17,11 +17,14 @@ from dataclasses import dataclass
 
 from payp.db.connection import ConnectionManager
 from payp.db.introspection import (
+    discover_fk_graph,
     discover_t0,
     discover_t1,
     discover_t2,
+    format_schema_graph_for_context,
     format_t0_for_context,
     format_t1_for_context,
+    hash_table_names,
 )
 from payp.models import ConnectionCredential, ConnectionProfile, DbType
 
@@ -118,6 +121,13 @@ async def run_one(target: TargetDB) -> tuple[str, bool, str]:
         ddl = await discover_t2(conn, target.t2_schema, target.t2_table)
         print(f"\n  T2 DDL for {target.t2_schema}.{target.t2_table}:")
         print("  " + ddl.replace("\n", "\n  "))
+
+        fk_graph = await discover_fk_graph(conn)
+        fk_graph.table_names_hash = hash_table_names(t1)
+        print(f"\n  FK graph: {len(fk_graph.edges)} relationships")
+        if fk_graph.edges:
+            graph_text = format_schema_graph_for_context(fk_graph)
+            print("  " + graph_text.replace("\n", "\n  "))
 
         result = await conn.execute(target.test_sql, limit=3)
         print(f"\n  Query: {target.test_sql[:60]}...")

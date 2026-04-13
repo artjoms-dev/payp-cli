@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from payp.config import global_dir
-from payp.models import SchemaCatalog, SchemaIndex
+from payp.models import SchemaCatalog, SchemaGraph, SchemaIndex
 
 
 def cache_dir() -> Path:
@@ -81,3 +81,27 @@ def get_cached_table_count(connection_name: str) -> int | None:
 def has_cache(connection_name: str) -> bool:
     """Check if cache exists for a connection."""
     return (cache_dir() / f"{connection_name}_t0.json").exists()
+
+
+def save_fk_graph(connection_name: str, graph: SchemaGraph) -> None:
+    """Save FK adjacency graph to cache."""
+    path = cache_dir() / f"{connection_name}_fk.json"
+    path.write_text(graph.model_dump_json(indent=2))
+
+
+def load_fk_graph(connection_name: str) -> SchemaGraph | None:
+    """Load cached FK adjacency graph."""
+    path = cache_dir() / f"{connection_name}_fk.json"
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text())
+    return SchemaGraph(**data)
+
+
+def clear_connection_cache(connection_name: str) -> None:
+    """Remove all cached files for a connection."""
+    d = cache_dir()
+    for suffix in ("_t0.json", "_t1.json", "_meta.json", "_fk.json"):
+        p = d / f"{connection_name}{suffix}"
+        if p.exists():
+            p.unlink()

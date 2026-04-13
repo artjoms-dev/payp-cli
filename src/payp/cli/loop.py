@@ -44,6 +44,7 @@ def _ensure_chat_session() -> None:
         mode=config.default_mode,
         t0=_state.get("t0"),
         t1=_state.get("t1"),
+        fk_graph=_state.get("fk_graph"),
     )
 
     # Restore message history
