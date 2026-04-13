@@ -58,7 +58,9 @@ async def handle_knowledge_proposal(
     try:
         prompt_session: PromptSession = PromptSession()  # type: ignore[type-arg]
         answer = (
-            await prompt_session.prompt_async("  Save to knowledge base? [y/N/e(edit)]: ")
+            await prompt_session.prompt_async(
+                "  Save to knowledge base? [y/n/e] (Enter = no, e=edit): "
+            )
         ).strip().lower()
     except (EOFError, KeyboardInterrupt):
         answer = "n"
@@ -282,7 +284,9 @@ async def execute_destructive_with_approval(
         watcher.pause()
     try:
         prompt_session: PromptSession = PromptSession()  # type: ignore[type-arg]
-        answer = (await prompt_session.prompt_async("  Execute? [y/N] ")).strip().lower()
+        answer = (
+            await prompt_session.prompt_async("  Execute? [y/n] (Enter = no): ")
+        ).strip().lower()
     except (KeyboardInterrupt, EOFError):
         answer = ""
     finally:

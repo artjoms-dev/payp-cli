@@ -152,10 +152,11 @@ def prompt_confirm(message: str, *, default: bool) -> bool:
     """Strict y/n prompt. Loops on invalid input.
 
     ``default`` is used only when the user submits an empty line. The
-    prompt suffix reflects the default (``[Y/n]`` vs ``[y/N]``).
+    prompt suffix makes the default explicit so pressing Enter has an
+    obvious meaning: ``[y/n] (Enter = yes)`` or ``[y/n] (Enter = no)``.
     """
-    suffix = " [Y/n]: " if default else " [y/N]: "
-    full_message = message.rstrip() + suffix
+    hint = "yes" if default else "no"
+    full_message = f"{message.rstrip()} [y/n] (Enter = {hint}): "
     while True:
         raw = command_prompt(full_message).strip().lower()
         if not raw:

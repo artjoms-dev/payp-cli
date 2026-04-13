@@ -49,16 +49,16 @@ def _cmd_memory(args: str) -> None:
 
         migrate = False
         if current["entries"] > 0:
-            from prompt_toolkit import prompt as pt_prompt
+            from payp.cli.runtime import prompt_confirm
 
             scope_label = (
                 f"{active_conn} (+ shared)" if active_conn else "all connections"
             )
-            answer = pt_prompt(
+            migrate = prompt_confirm(
                 f"  Migrate {current['entries']} entries "
-                f"[{scope_label}] from '{current['name']}' to '{target}'? [y/N] "
-            ).strip().lower()
-            migrate = answer in ("y", "yes")
+                f"[{scope_label}] from '{current['name']}' to '{target}'?",
+                default=False,
+            )
             if not migrate_all and active_conn:
                 console.print(
                     "  [dim]Tip: use [bold]/memory switch "

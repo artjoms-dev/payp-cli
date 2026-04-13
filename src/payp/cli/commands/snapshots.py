@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from payp.cli.runtime import _run_async, command_prompt
+from payp.cli.runtime import _run_async
 from payp.cli.state import _state, console
 
 
@@ -131,13 +131,12 @@ def _cmd_rollback() -> None:
 
     console.print()
     try:
-        answer = command_prompt("Execute restore? [y/N]: ").strip().lower()
+        from payp.cli.runtime import prompt_confirm
+        if not prompt_confirm("Execute restore?", default=False):
+            console.print("[dim]Cancelled.[/dim]")
+            return
     except (EOFError, KeyboardInterrupt):
         console.print("\n[dim]Cancelled.[/dim]")
-        return
-
-    if answer != "y":
-        console.print("[dim]Cancelled.[/dim]")
         return
 
     from payp.tools.snapshot import RestoreSnapshotTool
