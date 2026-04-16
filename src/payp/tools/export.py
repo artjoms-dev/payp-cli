@@ -59,6 +59,7 @@ def _make_progress() -> Progress:
 
 class ExportTool(BaseTool):
     name = "export_query"
+    tier = "advanced"
     description = (
         "Export a SQL query's full results to a file. "
         "Supports CSV, JSONL, XLSX (Excel), and Parquet formats. "

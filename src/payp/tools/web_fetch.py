@@ -64,6 +64,7 @@ def _is_internal_host(host: str) -> tuple[bool, str]:
 
 class WebFetchTool(BaseTool):
     name = "fetch_url"
+    tier = "advanced"
     description = (
         "Fetch data from a URL or REST API over HTTP(S). Use for: pulling data "
         "from public datasets, REST API endpoints, JSON feeds, or CSV files "

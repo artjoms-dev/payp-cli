@@ -399,6 +399,7 @@ def build_system_prompt(
     active_connections: list[dict] | None = None,
     skills: list[Any] | None = None,
     schema_budget: int = 10000,
+    advanced_tool_names: list[str] | None = None,
 ) -> str:
     """Assemble the full system prompt from all sections."""
     sections = []
@@ -541,6 +542,15 @@ Do not guess or pretend you can access data.""")
             "they do NOT bypass security modes."
         )
         sections.append("\n".join(skill_lines))
+
+    # 7c. Advanced tools (names only — LLM can request full definitions)
+    if advanced_tool_names:
+        sections.append(
+            "## Additional Tools\n"
+            "These tools are available but not loaded by default. "
+            "Mention the tool name in your response and it will be activated for the next turn:\n"
+            + ", ".join(advanced_tool_names)
+        )
 
     # 8. Error recovery
     sections.append(ERROR_RECOVERY)

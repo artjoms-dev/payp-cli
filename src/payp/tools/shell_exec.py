@@ -26,6 +26,7 @@ MAX_OUTPUT = 50_000
 
 class ShellExecTool(BaseTool):
     name = "execute_shell"
+    tier = "advanced"
     description = (
         "Execute a shell command via the system shell (cmd.exe on Windows, /bin/sh on Unix) in the current working directory. "
         "Use for: git operations, pg_dump/mysqldump backups, curl/wget HTTP calls, "

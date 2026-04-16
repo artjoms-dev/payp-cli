@@ -25,6 +25,7 @@ MAX_OUTPUT = 50_000
 
 class RExecTool(BaseTool):
     name = "execute_r"
+    tier = "advanced"
     description = (
         "Execute R code via Rscript in a subprocess. Use for: ggplot2 charts, "
         "dplyr/tidyr data manipulation, statistical modeling (lm/glm/aov), "

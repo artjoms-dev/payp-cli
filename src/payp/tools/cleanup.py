@@ -33,6 +33,7 @@ VALID_TARGETS = (
 
 class CleanupTool(BaseTool):
     name = "cleanup"
+    tier = "advanced"
     description = (
         "Delete stored payp artifacts. Targets:\n"
         "  - sessions: chat session history (JSONL files)\n"

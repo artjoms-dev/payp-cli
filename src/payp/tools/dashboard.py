@@ -28,6 +28,7 @@ VALID_LAYOUTS = {"2x2", "1x3", "2x3", "3x2"}
 
 
 class DashboardTool(BaseTool):
+    tier = "advanced"
     name = "dashboard"
     description = (
         "Build an interactive grid dashboard from multiple SQL queries. "

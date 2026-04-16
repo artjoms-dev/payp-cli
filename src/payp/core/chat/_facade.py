@@ -224,6 +224,7 @@ class ChatSession:
             self.skills.for_dialect(db_type) if self.conn and self.conn.is_connected
             else self.skills.all()
         )
+        advanced_tool_names = self.registry.advanced_names()
         return build_system_prompt(
             mode=self.mode,
             connection_name=conn_name,
@@ -237,6 +238,7 @@ class ChatSession:
             active_connections=active_connections,
             skills=skills_for_prompt or None,
             schema_budget=schema_budget,
+            advanced_tool_names=advanced_tool_names,
         )
 
     def get_context_stats(self, system_prompt: str = "") -> Any:
@@ -307,7 +309,7 @@ class ChatSession:
             *self.messages,
         ]
 
-        tools = self.registry.all_definitions()
+        tools = self.registry.core_definitions()
 
         # Wrap the whole loop with Esc-abort (AbortController pattern from Claude Code)
         async with AbortWatcher() as watcher:

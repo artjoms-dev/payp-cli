@@ -15,6 +15,7 @@ from payp.tools.base import BaseTool, ToolResult
 
 class SaveQueryTool(BaseTool):
     name = "save_query"
+    tier = "advanced"
     description = (
         "Save a SQL query to the library for later reuse. "
         "Use when user says 'save this', 'save as X', or creates a query worth keeping. "
@@ -68,6 +69,7 @@ class SaveQueryTool(BaseTool):
 
 class ListQueriesTool(BaseTool):
     name = "list_queries"
+    tier = "advanced"
     description = (
         "List saved queries from the library, optionally filtered. "
         "Returns names, descriptions, and tags. "
@@ -111,6 +113,7 @@ class ListQueriesTool(BaseTool):
 
 class LoadQueryTool(BaseTool):
     name = "load_query"
+    tier = "advanced"
     description = (
         "Load the SQL for a saved query by name. "
         "Use when user says 'run the X query' or 'show me the saved Y query'. "
@@ -153,6 +156,7 @@ class LoadQueryTool(BaseTool):
 
 class DeleteQueryTool(BaseTool):
     name = "delete_query"
+    tier = "advanced"
     description = "Delete a saved query by name."
     is_read_only = False
     is_destructive = True

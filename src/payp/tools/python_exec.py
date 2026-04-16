@@ -25,6 +25,7 @@ MAX_OUTPUT = 50_000
 
 class PythonExecTool(BaseTool):
     name = "execute_python"
+    tier = "advanced"
     description = (
         "Execute Python code in a subprocess. Use for: generating charts "
         "(matplotlib/plotly/seaborn), pandas analysis, custom exports, "

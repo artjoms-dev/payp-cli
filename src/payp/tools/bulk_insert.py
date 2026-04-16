@@ -16,6 +16,7 @@ from payp.tools.base import BaseTool, ToolResult
 
 class BulkInsertTool(BaseTool):
     name = "bulk_insert"
+    tier = "advanced"
     description = (
         "Insert MANY rows into a table in ONE call. Handles batching, dialect differences, "
         "and Oracle IDENTITY sequence drift automatically. "

@@ -21,6 +21,7 @@ from payp.ui.charts import (
 
 class ChartTool(BaseTool):
     name = "chart"
+    tier = "advanced"
     description = (
         "Render a SQL query result as a terminal chart. "
         "Use for visualizing data: revenue over time, counts by category, distributions, "

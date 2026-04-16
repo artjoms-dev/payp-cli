@@ -9,6 +9,7 @@ from payp.tools.base import BaseTool, ToolResult
 
 class ListConnectionsTool(BaseTool):
     name = "list_active_connections"
+    tier = "advanced"
     description = (
         "List all currently active database connections in this session. "
         "Returns name, type, version, and which is currently active. "
@@ -46,6 +47,7 @@ class ListConnectionsTool(BaseTool):
 
 class SwitchConnectionTool(BaseTool):
     name = "switch_connection"
+    tier = "advanced"
     description = (
         "Switch the default active database connection. "
         "Use when the user wants to make a specific connection the primary target for subsequent queries."
@@ -110,6 +112,7 @@ class SwitchConnectionTool(BaseTool):
 
 class CompareSchemasTool(BaseTool):
     name = "compare_schemas"
+    tier = "advanced"
     description = (
         "Compare a table's schema (columns, types) between two active connections. "
         "Returns columns only in A, only in B, type differences, and migration SQL to sync. "
@@ -219,6 +222,7 @@ class CompareSchemasTool(BaseTool):
 
 class CompareDataTool(BaseTool):
     name = "compare_data"
+    tier = "advanced"
     description = (
         "Compare query results between two connections by a key column. "
         "Runs the same (or similar) query on both, then diffs rows by the key. "
