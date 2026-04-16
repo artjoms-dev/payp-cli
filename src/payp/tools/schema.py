@@ -6,6 +6,57 @@ from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
 
+# ---------------------------------------------------------------------------
+# Dialect-specific SQL for CheckCascadeTool
+# ---------------------------------------------------------------------------
+
+_CASCADE_SQL_PG = """
+    SELECT
+        tc.table_schema || '.' || tc.table_name AS referencing_table,
+        kcu.column_name AS referencing_column,
+        rc.delete_rule
+    FROM information_schema.referential_constraints rc
+    JOIN information_schema.table_constraints tc
+        ON rc.constraint_name = tc.constraint_name
+        AND rc.constraint_schema = tc.constraint_schema
+    JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+        AND tc.table_schema = kcu.table_schema
+    JOIN information_schema.constraint_column_usage ccu
+        ON rc.unique_constraint_name = ccu.constraint_name
+    WHERE ccu.table_schema = %s AND ccu.table_name = %s
+"""
+
+_CASCADE_SQL_MYSQL = """
+    SELECT
+        CONCAT(kcu.TABLE_SCHEMA, '.', kcu.TABLE_NAME) AS referencing_table,
+        kcu.COLUMN_NAME AS referencing_column,
+        rc.DELETE_RULE AS delete_rule
+    FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+    JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+        ON rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+        AND rc.CONSTRAINT_SCHEMA = kcu.TABLE_SCHEMA
+    WHERE rc.REFERENCED_TABLE_SCHEMA = %s
+      AND rc.REFERENCED_TABLE_NAME = %s
+"""
+
+_CASCADE_SQL_ORACLE = """
+    SELECT
+        ac.owner || '.' || ac.table_name AS referencing_table,
+        acc.column_name AS referencing_column,
+        ac.delete_rule AS delete_rule
+    FROM all_constraints ac
+    JOIN all_cons_columns acc
+        ON ac.owner = acc.owner
+        AND ac.constraint_name = acc.constraint_name
+    JOIN all_constraints ref
+        ON ac.r_owner = ref.owner
+        AND ac.r_constraint_name = ref.constraint_name
+    WHERE ac.constraint_type = 'R'
+      AND ref.owner = UPPER(%s)
+      AND ref.table_name = UPPER(%s)
+"""
+
 
 class SchemaLookupTool(BaseTool):
     name = "schema_lookup"
@@ -136,6 +187,7 @@ class CheckCascadeTool(BaseTool):
 
     async def call(self, args: dict[str, Any], context: dict[str, Any]) -> ToolResult:
         from payp.db.connection import ConnectionManager
+        from payp.models import DbType
 
         conn: ConnectionManager | None = context.get("connection_manager")
         if not conn or not conn.is_connected:
@@ -143,28 +195,41 @@ class CheckCascadeTool(BaseTool):
 
         table = args.get("table", "").strip()
         schema = args.get("schema", "public").strip()
+        table_ref = f"{schema}.{table}" if schema else table
 
         if not table:
             return ToolResult(success=False, error="No table specified")
 
+        # MongoDB has no FK enforcement — return early
+        if conn.db_type == DbType.MONGODB:
+            return ToolResult(
+                success=True,
+                data={
+                    "table": table_ref,
+                    "cascade_relationships": [],
+                    "warning": (
+                        "MongoDB does not enforce foreign key constraints. "
+                        "Cascade deletes are not applicable. "
+                        "Check application-level references manually."
+                    ),
+                },
+            )
+
+        # Pick the dialect-specific SQL
+        if conn.db_type == DbType.POSTGRESQL:
+            sql = _CASCADE_SQL_PG
+        elif conn.db_type == DbType.MYSQL:
+            sql = _CASCADE_SQL_MYSQL
+        elif conn.db_type == DbType.ORACLE:
+            sql = _CASCADE_SQL_ORACLE
+        else:
+            return ToolResult(
+                success=False,
+                error=f"Unsupported dialect: {conn.db_type}",
+            )
+
         try:
-            # Find all FK references to this table with cascade info
-            rows = await conn.execute_raw("""
-                SELECT
-                    tc.table_schema || '.' || tc.table_name AS referencing_table,
-                    kcu.column_name AS referencing_column,
-                    rc.delete_rule
-                FROM information_schema.referential_constraints rc
-                JOIN information_schema.table_constraints tc
-                    ON rc.constraint_name = tc.constraint_name
-                    AND rc.constraint_schema = tc.constraint_schema
-                JOIN information_schema.key_column_usage kcu
-                    ON tc.constraint_name = kcu.constraint_name
-                    AND tc.table_schema = kcu.table_schema
-                JOIN information_schema.constraint_column_usage ccu
-                    ON rc.unique_constraint_name = ccu.constraint_name
-                WHERE ccu.table_schema = %s AND ccu.table_name = %s
-            """, (schema, table))
+            rows = await conn.execute_raw(sql, (schema, table))
 
             if not rows:
                 return ToolResult(
@@ -180,7 +245,7 @@ class CheckCascadeTool(BaseTool):
             for row in rows:
                 ref_table = row["referencing_table"]
                 ref_col = row["referencing_column"]
-                delete_rule = row["delete_rule"]
+                delete_rule = (row["delete_rule"] or "").upper()
 
                 # ref_table comes from information_schema — trusted but still
                 # validated + dialect-quoted before interpolation.
