@@ -13,8 +13,11 @@ Assembles 7 sections based on current state:
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from payp.models import SchemaCatalog, SchemaGraph, SchemaIndex, SecurityMode
 
@@ -508,8 +511,8 @@ Do not guess or pretend you can access data.""")
                     if content:
                         knowledge_parts.append(f"### {f.stem}")
                         knowledge_parts.append(content)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Prompt section generation failed: %s", e)
     if len(knowledge_parts) > 1:
         sections.append("\n".join(knowledge_parts))
 

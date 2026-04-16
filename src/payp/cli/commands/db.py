@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from payp.cli.runtime import (
     _run_async,
@@ -566,8 +569,8 @@ async def _connect_to_db(
         _state.pop("t1", None)
         try:
             await mgr.disconnect()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Disconnect during cleanup failed: %s", e)
         return
 
     mc = _state.get("multi_conn_manager")

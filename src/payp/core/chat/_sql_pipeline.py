@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 from payp.core.classifier import SqlCategory, classify_sql, statically_hard_blocked
 from payp.core.reviewer import Reviewer, Verdict
@@ -61,8 +64,8 @@ def log_sql_execution(
             static_block_reason=static_block_reason,
             consensus_verdict=consensus_verdict,
         )
-    except Exception:
-        pass  # Don't let logging errors break the chat flow
+    except Exception as e:
+        logger.warning("Transaction log write failed: %s", e)
 
 
 async def execute_sql_with_mode(

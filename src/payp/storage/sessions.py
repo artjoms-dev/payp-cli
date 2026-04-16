@@ -7,10 +7,13 @@ Format: one JSON object per line with timestamp, role, content, etc.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from secrets import token_hex
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from payp.config import global_dir
 
@@ -191,8 +194,8 @@ def list_sessions() -> list[dict[str, Any]]:
                 "size": stat.st_size,
                 "mtime": stat.st_mtime,
             })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to read session %s: %s", f.name, e)
     return sessions
 
 
@@ -319,8 +322,8 @@ def read_session(filepath: str) -> dict[str, Any]:
                     # is respected on /resume.
                     if ev.get("backend"):
                         memory_backend = ev["backend"]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Skipped malformed event in session: %s", e)
 
     # Build summary from first user message
     summary = ""

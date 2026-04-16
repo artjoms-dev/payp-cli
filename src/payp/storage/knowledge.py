@@ -21,8 +21,11 @@ Auto-loaded into LLM context before queries. User confirms before saving.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from payp.config import global_dir
 
@@ -128,7 +131,8 @@ def read_table_knowledge(connection_name: str, table_name: str, obj_type: str = 
         return None
     try:
         return path.read_text(encoding="utf-8")
-    except Exception:
+    except Exception as e:
+        logger.warning("Knowledge I/O failed: %s", e)
         return None
 
 
@@ -220,7 +224,8 @@ def load_overview(connection_name: str) -> str | None:
         return None
     try:
         return path.read_text(encoding="utf-8")
-    except Exception:
+    except Exception as e:
+        logger.warning("Knowledge I/O failed: %s", e)
         return None
 
 

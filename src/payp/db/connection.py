@@ -11,8 +11,11 @@ is_connected, db_version) is identical across drivers.
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 import time
+
+logger = logging.getLogger(__name__)
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -279,7 +282,8 @@ class ConnectionManager:
             return False
         try:
             return bool(detector(exc))
-        except Exception:
+        except Exception as e:
+            logger.warning("Reconnection check failed: %s", e)
             return False
 
     async def _auto_reconnect(self) -> bool:

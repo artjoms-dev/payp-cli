@@ -13,7 +13,10 @@ know the source database.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from payp.db.connection import ConnectionManager
 from payp.models import DbType, SchemaCatalog, SchemaGraph, SchemaIndex
@@ -338,7 +341,8 @@ async def _t2_mongo(conn: ConnectionManager, collection: str) -> str:
         )
         if stats_rows:
             total_docs = stats_rows[0].get("count", "?")
-    except Exception:
+    except Exception as e:
+        logger.warning("Introspection failed: %s", e)
         count_rows = await conn.execute_raw(
             _json.dumps({"op": "countDocuments", "collection": collection, "filter": {}})
         )

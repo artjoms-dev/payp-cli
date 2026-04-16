@@ -7,7 +7,10 @@ for switching backends mid-session and migrating data between them.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from payp.memory.interface import MemoryBackend
 from payp.models import MemoryConfig
@@ -261,8 +264,8 @@ async def import_knowledge(
                         existed = await backend.delete(conn_name, table_name)
                         if existed:
                             replaced += 1
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Memory backend error: %s", e)
                 await backend.save(conn_name, table_name, content, section="business_logic")
                 imported += 1
             except Exception as exc:
