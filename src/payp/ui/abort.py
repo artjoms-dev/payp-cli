@@ -7,18 +7,26 @@ a shared asyncio.Event is set. Callers check/await the event to abort.
 from __future__ import annotations
 
 import asyncio
-import select
 import sys
-import termios
-import tty
 from collections.abc import Iterator
 from contextlib import contextmanager
+
+_IS_WINDOWS = sys.platform == "win32"
+
+if not _IS_WINDOWS:
+    import select
+    import termios
+    import tty
 
 
 @contextmanager
 def _raw_stdin() -> Iterator[None]:
     """Temporarily put stdin in raw mode so we can read single keypresses."""
     if not sys.stdin.isatty():
+        yield
+        return
+    if _IS_WINDOWS:
+        # Windows doesn't need raw mode — msvcrt reads keys directly
         yield
         return
     fd = sys.stdin.fileno()
@@ -58,14 +66,22 @@ class AbortWatcher:
         """Resume stdin polling + drain any buffered bytes to avoid stale triggers."""
         # Drain stdin buffer (clear any stray bytes from nested UI)
         if sys.stdin.isatty():
-            try:
-                while True:
-                    r, _, _ = select.select([sys.stdin], [], [], 0)
-                    if not r:
-                        break
-                    sys.stdin.read(1)
-            except Exception:
-                pass
+            if _IS_WINDOWS:
+                import msvcrt
+                try:
+                    while msvcrt.kbhit():
+                        msvcrt.getch()
+                except Exception:
+                    pass
+            else:
+                try:
+                    while True:
+                        r, _, _ = select.select([sys.stdin], [], [], 0)
+                        if not r:
+                            break
+                        sys.stdin.read(1)
+                except Exception:
+                    pass
         # Re-enter raw mode
         self._raw_ctx = _raw_stdin()
         self._raw_ctx.__enter__()
@@ -85,6 +101,15 @@ class AbortWatcher:
     def _poll_stdin(self) -> bool:
         """Return True if Esc/q was pressed."""
         if not sys.stdin.isatty() or self._paused:
+            return False
+        if _IS_WINDOWS:
+            import msvcrt
+            if msvcrt.kbhit():
+                try:
+                    ch = msvcrt.getch().decode("utf-8", errors="ignore")
+                except Exception:
+                    return False
+                return ch in ("\x1b", "q", "Q")
             return False
         r, _, _ = select.select([sys.stdin], [], [], 0.2)
         if r and not self._paused:
