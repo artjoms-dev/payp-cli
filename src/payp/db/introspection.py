@@ -331,11 +331,18 @@ async def _t2_mongo(conn: ConnectionManager, collection: str) -> str:
     sample_rows = await conn.execute_raw(
         _json.dumps({"op": "sample", "collection": collection, "size": 50})
     )
-    # Count
-    count_rows = await conn.execute_raw(
-        _json.dumps({"op": "countDocuments", "collection": collection, "filter": {}})
-    )
-    total_docs = count_rows[0].get("count", "?") if count_rows else "?"
+    total_docs: Any = "?"
+    try:
+        stats_rows = await conn.execute_raw(
+            _json.dumps({"op": "collStats", "collection": collection})
+        )
+        if stats_rows:
+            total_docs = stats_rows[0].get("count", "?")
+    except Exception:
+        count_rows = await conn.execute_raw(
+            _json.dumps({"op": "countDocuments", "collection": collection, "filter": {}})
+        )
+        total_docs = count_rows[0].get("count", "?") if count_rows else "?"
 
     # Infer field types from sampled documents
     field_types: dict[str, set[str]] = {}

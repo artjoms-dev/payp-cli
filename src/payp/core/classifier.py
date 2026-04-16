@@ -91,11 +91,20 @@ def _classify_mql(mql: str) -> SqlClassification:
         return SqlClassification(category=SqlCategory.DML_WRITE, statement_type="UPDATE")
     if op in ("deletemany", "deleteone"):
         has_filter = bool(doc.get("filter"))
+        if op == "deletemany" and not has_filter:
+            return SqlClassification(
+                category=SqlCategory.HARD_BLOCK,
+                statement_type="DELETE",
+                has_where=False,
+                is_hard_block=True,
+                risk_reason="deleteMany with empty filter deletes every document",
+            )
+        empty_one = "" if has_filter else "deleteOne with empty filter removes an arbitrary doc"
         return SqlClassification(
             category=SqlCategory.DML_WRITE,
             statement_type="DELETE",
             has_where=has_filter,
-            risk_reason="" if has_filter else "deleteMany with empty filter - deletes all docs",
+            risk_reason=empty_one,
         )
     # DDL-like
     if op in ("createindex", "dropindex"):
@@ -107,6 +116,13 @@ def _classify_mql(mql: str) -> SqlClassification:
             statement_type="DROP COLLECTION",
             is_hard_block=True,
             risk_reason="Drops entire collection and all its data",
+        )
+    if op == "dropdatabase":
+        return SqlClassification(
+            category=SqlCategory.HARD_BLOCK,
+            statement_type="DROP DATABASE",
+            is_hard_block=True,
+            risk_reason="Drops the entire database and all its collections",
         )
     return SqlClassification(category=SqlCategory.OTHER, statement_type=op.upper())
 
@@ -340,6 +356,8 @@ def statically_hard_blocked(sql: str, dialect: str = "postgres") -> str | None:
         op = doc.get("op", "").lower()
         if op == "dropcollection":
             return "dropCollection destroys the entire collection"
+        if op == "dropdatabase":
+            return "dropDatabase destroys the entire database"
         if op == "deletemany" and not doc.get("filter"):
             return "deleteMany with empty filter deletes all documents"
         return None

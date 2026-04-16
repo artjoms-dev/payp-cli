@@ -6,7 +6,9 @@ import json
 import time
 from collections.abc import AsyncIterator
 from typing import Any
+from urllib.parse import quote_plus
 
+from payp.db.connection import ConnectionError as DbConnectionError
 from payp.models import ConnectionCredential, ConnectionProfile, QueryResult
 
 _MONGO_CONN_MARKERS = (
@@ -39,7 +41,22 @@ class MongoDriver:
         return self._version
 
     @staticmethod
-    def _is_connection_error(exc: Exception) -> bool:
+    def _is_connection_error(exc: BaseException) -> bool:
+        try:
+            from pymongo.errors import (
+                AutoReconnect,
+                ConnectionFailure,
+                NetworkTimeout,
+                ServerSelectionTimeoutError,
+            )
+        except ImportError:
+            pass
+        else:
+            if isinstance(
+                exc,
+                (AutoReconnect, ConnectionFailure, NetworkTimeout, ServerSelectionTimeoutError),
+            ):
+                return True
         msg = str(exc).lower()
         return any(m in msg for m in _MONGO_CONN_MARKERS)
 
@@ -53,15 +70,24 @@ class MongoDriver:
         db_name = self.profile.database
 
         if user:
-            uri = f"mongodb://{user}:{pwd}@{host}:{port}/{db_name}?authSource={db_name}"
+            # quote_plus escapes '@', ':', '/', '?', '#', '%' so the URI
+            # parses correctly when creds contain those chars
+            uri = (
+                f"mongodb://{quote_plus(user)}:{quote_plus(pwd)}"
+                f"@{host}:{port}/{db_name}?authSource={db_name}"
+            )
         else:
             uri = f"mongodb://{host}:{port}/{db_name}"
 
-        self._client = motor.motor_asyncio.AsyncIOMotorClient(
-            uri,
-            serverSelectionTimeoutMS=10_000,
-            connectTimeoutMS=10_000,
-        )
+        timeout_ms = max(1, self.profile.timeout) * 1000
+        client_kwargs: dict[str, Any] = {
+            "serverSelectionTimeoutMS": timeout_ms,
+            "connectTimeoutMS": timeout_ms,
+        }
+        if self.profile.ssl:
+            client_kwargs["tls"] = True
+
+        self._client = motor.motor_asyncio.AsyncIOMotorClient(uri, **client_kwargs)
         self._db = self._client[db_name]
         info = await self._db.command({"buildInfo": 1})
         self._version = info.get("version", "unknown")
@@ -84,6 +110,9 @@ class MongoDriver:
         self, mql: str, params: tuple | None = None
     ) -> list[dict[str, Any]]:
         """Execute a MongoDB operation encoded as a JSON envelope string."""
+        if not self.is_connected:
+            raise DbConnectionError("Not connected")
+        del params
         doc = self._parse_mql(mql)
         op = doc.get("op", "").lower()
         coll_name = doc.get("collection", "")
@@ -202,6 +231,15 @@ class MongoDriver:
             await coll.drop_index(index_name)
             return [{"dropped": index_name}]
 
+        # -- destructive DDL-like ops (gated by classifier HARD_BLOCK) --
+        if op == "dropcollection":
+            await db.drop_collection(coll_name)
+            return [{"dropped_collection": coll_name}]
+
+        if op == "dropdatabase":
+            await self._client.drop_database(self._db.name)
+            return [{"dropped_database": self._db.name}]
+
         raise ValueError(f"Unsupported MongoDB op: {op!r}")
 
     async def stream_raw(
@@ -211,6 +249,8 @@ class MongoDriver:
         batch_size: int = 10_000,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """Stream results in batches. Only supports find/aggregate ops."""
+        if not self.is_connected:
+            raise DbConnectionError("Not connected")
         doc = self._parse_mql(mql)
         op = doc.get("op", "").lower()
         coll_name = doc.get("collection", "")
@@ -257,17 +297,29 @@ class MongoDriver:
         if not rows_raw:
             return QueryResult(columns=[], rows=[], row_count=0, execution_ms=elapsed)
 
-        # Normalize: convert ObjectId to str, remove _id
-        clean_rows = []
-        for row in rows_raw:
-            clean = {
-                k: str(v) if type(v).__name__ == "ObjectId" else v
-                for k, v in row.items()
-                if k != "_id"
-            }
-            clean_rows.append(clean)
+        objectid_cls: type | None
+        try:
+            from bson import ObjectId
+            objectid_cls = ObjectId
+        except ImportError:
+            objectid_cls = None
 
-        columns = list(clean_rows[0].keys()) if clean_rows else []
+        def _normalize(v: Any) -> Any:
+            if objectid_cls is not None and isinstance(v, objectid_cls):
+                return str(v)
+            return v
+
+        clean_rows: list[dict[str, Any]] = []
+        columns: list[str] = []
+        seen: set[str] = set()
+        for row in rows_raw:
+            clean = {k: _normalize(v) for k, v in row.items()}
+            clean_rows.append(clean)
+            for k in clean:
+                if k not in seen:
+                    seen.add(k)
+                    columns.append(k)
+
         truncated = len(clean_rows) > limit
         if truncated:
             clean_rows = clean_rows[:limit]
