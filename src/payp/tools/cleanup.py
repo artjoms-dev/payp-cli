@@ -154,6 +154,8 @@ class CleanupTool(BaseTool):
             else:
                 return ToolResult(success=False, error=f"Unsupported target: {target}")
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.cleanup").exception("cleanup_tool failed")
             return ToolResult(success=False, error=f"{target} cleanup failed: {e}")
 
         n = len(result.get("deleted", []))

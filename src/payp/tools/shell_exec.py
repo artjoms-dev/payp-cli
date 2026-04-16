@@ -101,6 +101,8 @@ class ShellExecTool(BaseTool):
                 cwd=Path.cwd(),
             )
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.shell_exec").exception("ShellExecTool spawn failed")
             return ToolResult(
                 success=False,
                 error=f"Failed to spawn shell: {e}",

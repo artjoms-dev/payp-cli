@@ -90,6 +90,8 @@ class BulkInsertTool(BaseTool):
                 await conn.execute_raw(sql, params)
                 inserted += len(batch)
             except Exception as e:
+                import logging
+                logging.getLogger("payp.tools.bulk_insert").exception("BulkInsertTool batch failed")
                 err_str = str(e)
                 errors.append(f"batch {batch_start}-{batch_start + len(batch)}: {err_str[:150]}")
                 # Oracle IDENTITY drift recovery + fallback to per-row inserts

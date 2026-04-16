@@ -51,4 +51,6 @@ class ExplainTool(BaseTool):
             )
 
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.explain").exception("ExplainTool failed")
             return ToolResult(success=False, error=str(e), summary=f"EXPLAIN failed: {e}")

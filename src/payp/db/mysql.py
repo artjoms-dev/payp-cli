@@ -72,6 +72,8 @@ class MySQLDriver:
                 charset="utf8mb4",
             )
         except Exception as e:
+            import logging
+            logging.getLogger("payp.db.mysql").exception("MySQL connect failed")
             raise ConnectionError(f"Failed to connect to {self.profile.name}: {e}") from e
 
         rows = await self.execute_raw("SELECT VERSION() AS version")

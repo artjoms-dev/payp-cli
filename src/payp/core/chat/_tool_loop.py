@@ -41,8 +41,11 @@ async def run_tool_loop(
             try:
                 session.session.log_assistant(content, model=session.llm.get_executor_model())
             except Exception:
+                import logging
+                logging.getLogger("payp.core.chat.tool_loop").exception(
+                    "session log_assistant failed"
+                )
                 # Logging must never break the chat loop.
-                pass
 
         # If no tool calls, we're done
         if not raw_tool_calls:
@@ -165,7 +168,10 @@ async def run_tool_loop(
                     summary=_tc_sum,
                 )
             except Exception:
-                pass
+                import logging
+                logging.getLogger("payp.core.chat.tool_loop").exception(
+                    "session log_tool_call failed"
+                )
 
             # Wrap the payload in an untrusted envelope so a row value
             # like "ignore previous instructions" is received as DATA,

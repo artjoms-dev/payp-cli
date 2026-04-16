@@ -272,6 +272,8 @@ class CompareDataTool(BaseTool):
             rows_a = await mgr_a.execute_raw(sql)
             rows_b = await mgr_b.execute_raw(sql)
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.crossdb").exception("CompareDataTool query failed")
             return ToolResult(success=False, error=f"Query failed: {e}")
 
         if rows_a and key not in rows_a[0]:

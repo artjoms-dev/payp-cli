@@ -96,6 +96,8 @@ class _PostgresDriver:
                 row_factory=dict_row,
             )
         except Exception as e:
+            import logging
+            logging.getLogger("payp.db.connection").exception("Postgres connect failed")
             raise ConnectionError(f"Failed to connect to {self.profile.name}: {e}") from e
 
         result = await self.execute_raw("SELECT version()")
@@ -246,6 +248,8 @@ class ConnectionManager:
             if self._should_auto_reconnect(e):
                 if await self._auto_reconnect():
                     return await self._driver.execute_raw(sql, params)
+            import logging
+            logging.getLogger("payp.db.connection").exception("execute_raw failed")
             raise
 
     async def stream_raw(
@@ -271,6 +275,8 @@ class ConnectionManager:
             if self._should_auto_reconnect(e):
                 if await self._auto_reconnect():
                     return await self._driver.execute(sql, limit)
+            import logging
+            logging.getLogger("payp.db.connection").exception("execute failed")
             raise
 
     def _should_auto_reconnect(self, exc: BaseException) -> bool:

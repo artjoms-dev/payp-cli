@@ -274,6 +274,8 @@ async def _column_stats(
                 result["null_percent"] = round(100.0 * nulls / total_rows, 2) if total_rows else 0.0
                 result["distinct_count"] = int(r.get("distinct_count") or 0)
     except Exception as e:
+        import logging
+        logging.getLogger("payp.tools.stats").exception("_column_stats base stats failed")
         result["error"] = f"base stats: {e}"
         return result
 
@@ -304,6 +306,8 @@ async def _column_stats(
                 result["p50"] = float(p50) if p50 is not None else None
                 result["p95"] = float(p95) if p95 is not None else None
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.stats").exception("_column_stats numeric failed")
             result["error"] = f"numeric: {e}"
 
     # Text stats
@@ -321,6 +325,8 @@ async def _column_stats(
                 result["avg_length"] = float(avg_len) if avg_len is not None else None
                 result["max_length"] = int(max_len) if max_len is not None else None
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.stats").exception("_column_stats text failed")
             result["error"] = f"text: {e}"
 
     # Date stats (min/max)
@@ -336,6 +342,8 @@ async def _column_stats(
                 result["min"] = str(r.get("minv")) if r.get("minv") is not None else None
                 result["max"] = str(r.get("maxv")) if r.get("maxv") is not None else None
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.stats").exception("_column_stats date failed")
             result["error"] = f"date: {e}"
 
     # Top 5 values when cardinality is low
@@ -356,6 +364,8 @@ async def _column_stats(
                 top.append({"value": v, "count": cnt})
             result["top_values"] = top
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.stats").exception("_column_stats top values failed")
             result["error"] = (result.get("error") or "") + f" top: {e}"
 
     return result
@@ -460,4 +470,6 @@ class StatsTool(BaseTool):
             summary = f"Profiled {profile['schema']}.{profile['table']}: {total} rows, {n_cols} columns"
             return ToolResult(success=True, data=profile, summary=summary)
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.stats").exception("StatsTool failed")
             return ToolResult(success=False, error=str(e), summary=f"Stats failed: {e}")

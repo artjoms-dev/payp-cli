@@ -150,6 +150,8 @@ class WebFetchTool(BaseTool):
         try:
             parsed = urlparse(url)
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.web_fetch").exception("URL parse failed")
             return ToolResult(success=False, error=f"Invalid URL: {e}")
 
         if parsed.scheme not in ("http", "https"):
@@ -218,6 +220,8 @@ class WebFetchTool(BaseTool):
                 summary="fetch_url: network error",
             )
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.web_fetch").exception("fetch_url request failed")
             return ToolResult(
                 success=False,
                 error=f"{type(e).__name__}: {e}",

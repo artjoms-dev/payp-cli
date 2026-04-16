@@ -74,4 +74,6 @@ class QueryTool(BaseTool):
             return ToolResult(success=True, data=data, summary=summary)
 
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.query").exception("QueryTool failed")
             return ToolResult(success=False, error=str(e), summary=f"Query failed: {e}")

@@ -222,6 +222,8 @@ async def execute_destructive_with_approval(
     try:
         preview = await tool.preview(args, context)
     except Exception as e:
+        import logging
+        logging.getLogger("payp.core.chat.approvals").exception("tool preview failed")
         preview = {"summary": f"Preview failed: {e}", "items": [], "warning": None}
 
     if preview is None:

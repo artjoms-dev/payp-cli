@@ -83,6 +83,8 @@ class ChartTool(BaseTool):
         try:
             rows = await conn.execute_raw(sql)
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.chart").exception("ChartTool query failed")
             return ToolResult(success=False, error=f"Query failed: {e}")
 
         if not rows:
@@ -223,6 +225,8 @@ class ChartTool(BaseTool):
             )
 
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.chart").exception("ChartTool render failed")
             return ToolResult(success=False, error=f"Chart failed: {e}")
 
 

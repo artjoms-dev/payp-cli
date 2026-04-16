@@ -170,6 +170,8 @@ class ExportTool(BaseTool):
             )
 
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.export").exception("ExportTool failed")
             # Clean up partial file on any failure.
             if partial_path.exists():
                 try:

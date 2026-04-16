@@ -131,7 +131,7 @@ def _create_backend(config: MemoryConfig, *, raise_on_failure: bool = False) -> 
         except Exception as exc:
             if raise_on_failure:
                 raise
-            logger.warning("mempalace init failed (%s) — falling back to native.", exc)
+            logger.exception("mempalace init failed — falling back to native.")
         else:
             return MemPalaceBackend(palace_dir=config.mempalace_dir)
 

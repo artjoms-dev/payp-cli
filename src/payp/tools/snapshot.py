@@ -139,6 +139,8 @@ class SnapshotBeforeDeleteTool(BaseTool):
             )
 
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.snapshot").exception("SnapshotBeforeDeleteTool failed")
             return ToolResult(success=False, error=str(e), summary=f"Snapshot failed: {e}")
 
 
@@ -229,6 +231,8 @@ class RestoreSnapshotTool(BaseTool):
             )
 
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.snapshot").exception("RestoreSnapshotTool failed")
             return ToolResult(success=False, error=str(e), summary=f"Restore failed: {e}")
 
 

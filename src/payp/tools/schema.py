@@ -224,4 +224,6 @@ class CheckCascadeTool(BaseTool):
             )
 
         except Exception as e:
+            import logging
+            logging.getLogger("payp.tools.schema").exception("SchemaTool failed")
             return ToolResult(success=False, error=str(e), summary=f"Cascade check failed: {e}")

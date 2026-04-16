@@ -108,6 +108,8 @@ def parse_skill_file(path: Path, scope: str = "builtin") -> Skill | None:
     try:
         fm_dict = _parse_frontmatter_block(fm_block)
     except Exception as e:
+        import logging
+        logging.getLogger("payp.skills.loader").exception("skill frontmatter parse failed")
         _warn(f"Skipped skill {path}: could not parse frontmatter ({e})")
         return None
 
@@ -124,6 +126,8 @@ def parse_skill_file(path: Path, scope: str = "builtin") -> Skill | None:
     try:
         frontmatter = SkillFrontmatter(**fm_dict)  # type: ignore[arg-type]
     except Exception as e:
+        import logging
+        logging.getLogger("payp.skills.loader").exception("skill frontmatter validation failed")
         _warn(f"Skipped skill {path}: invalid frontmatter ({e})")
         return None
 

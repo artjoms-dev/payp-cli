@@ -135,6 +135,8 @@ async def compact_messages(
         response = await llm_client.chat(summary_messages, model=model, stream=False)
         summary_text = response.content or "## Conversation Summary\n(summary failed)"
     except Exception as e:
+        import logging
+        logging.getLogger("payp.core.compaction").exception("_compress_via_llm failed")
         summary_text = f"## Conversation Summary\n(summary failed: {e})"
 
     # Replace old messages with a single summary assistant message + keep recent

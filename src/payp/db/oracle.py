@@ -89,6 +89,8 @@ class OracleDriver:
                 tcp_connect_timeout=self.profile.timeout,
             )
         except Exception as e:
+            import logging
+            logging.getLogger("payp.db.oracle").exception("Oracle connect failed")
             raise ConnectionError(f"Failed to connect to {self.profile.name}: {e}") from e
 
         rows = await self.execute_raw(

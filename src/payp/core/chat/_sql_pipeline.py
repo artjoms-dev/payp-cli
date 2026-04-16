@@ -62,7 +62,9 @@ def log_sql_execution(
             consensus_verdict=consensus_verdict,
         )
     except Exception:
-        pass  # Don't let logging errors break the chat flow
+        import logging
+        logging.getLogger("payp.core.chat.sql_pipeline").exception("tx_log.log failed")
+        # Don't let logging errors break the chat flow
 
 
 async def execute_sql_with_mode(

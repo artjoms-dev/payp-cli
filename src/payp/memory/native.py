@@ -147,6 +147,8 @@ class NativeMemoryBackend:
                     write_table_knowledge(conn_name, table_name, content)
                     migrated += 1
             except Exception as exc:
+                import logging
+                logging.getLogger("payp.memory.native").exception("NativeMemory migration entry failed")
                 errors.append(f"{conn_name}/{table_name}: {exc}")
 
         return {"migrated": migrated, "errors": errors}
