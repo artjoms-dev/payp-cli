@@ -127,3 +127,4 @@ class CostTracker(BaseModel):
     total_output_tokens: int = 0
     total_cost_usd: float = 0.0
     query_count: int = 0
+    last_input_tokens: int = 0  # most recent turn's input tokens (for context % display)

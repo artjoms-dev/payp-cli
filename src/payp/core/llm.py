@@ -290,6 +290,7 @@ class LLMClient:
         self.cost_tracker.total_output_tokens += output_tokens
         self.cost_tracker.total_cost_usd += cost
         self.cost_tracker.query_count += 1
+        self.cost_tracker.last_input_tokens = input_tokens
 
     def check_cost_limit(self) -> tuple[bool, str]:
         """Check if session cost limit is exceeded. Returns (exceeded, message)."""
