@@ -51,6 +51,7 @@ class ModelProvider(BaseModel):
     api_key: str
     base_url: str | None = None
     default_model: str | None = None
+    api_version: str | None = None
 
 
 class ModelRoles(BaseModel):
