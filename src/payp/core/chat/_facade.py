@@ -112,12 +112,15 @@ class ChatSession:
                 )
                 # Remember this SELECT for /more pagination
                 if sql:
-                    self.last_select = {
+                    select_data = {
                         "sql": sql,
                         "connection": self.conn.profile.name if self.conn else None,
                         "offset": 20,  # next page starts after this batch
                         "truncated": d.get("truncated", False),
                     }
+                    if self.multi_conn:
+                        self.multi_conn.set_last_select(select_data)
+                    self.last_select = select_data
             elif "rows_affected" in d:
                 display_dml_result(
                     self.console,

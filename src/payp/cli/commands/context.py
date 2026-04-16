@@ -34,11 +34,13 @@ def _cmd_more() -> None:
     from payp.ui.display import display_query_result
 
     chat = _state.get("chat_session")
-    if not chat or not getattr(chat, "last_select", None):
+    mc = getattr(chat, "multi_conn", None)
+    last = mc.get_last_select() if mc else None
+    if not last:
+        last = getattr(chat, "last_select", None)
+    if not chat or not last:
         console.print("[dim]No recent query to paginate. Run a SELECT first.[/dim]")
         return
-
-    last = chat.last_select
 
     mgr: ConnectionManager | None = _state.get("connection_manager")  # type: ignore[assignment]
     if not mgr or not mgr.is_connected:
@@ -83,7 +85,7 @@ def _cmd_more() -> None:
 
     if not result.columns or result.row_count == 0:
         console.print("[dim]No more rows.[/dim]")
-        chat.last_select["truncated"] = False
+        last["truncated"] = False
         return
 
     display_query_result(
@@ -94,8 +96,8 @@ def _cmd_more() -> None:
         truncated=result.truncated,
     )
     # Advance offset for the next /more
-    chat.last_select["offset"] = offset + result.row_count
-    chat.last_select["truncated"] = result.truncated
+    last["offset"] = offset + result.row_count
+    last["truncated"] = result.truncated
 
 
 def _set_schema_budget(value_str: str) -> None:
