@@ -284,6 +284,14 @@ class ChatSession:
         """Process a user message through the full chat loop."""
         from payp.ui.abort import AbortWatcher
 
+        # Check cost limit before making the LLM call
+        exceeded, msg = self.llm.check_cost_limit()
+        if exceeded:
+            self.console.print(f"[red]{msg}[/red]")
+            return
+        if msg:  # 80% warning
+            self.console.print(f"[yellow]{msg}[/yellow]")
+
         # Add user message to history
         self.messages.append({"role": "user", "content": user_input})
         self.session.log_user(user_input)

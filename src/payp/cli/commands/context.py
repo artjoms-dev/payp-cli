@@ -188,8 +188,49 @@ def _cmd_context(args: str) -> None:
     console.print()
 
 
-def _cmd_cost() -> None:
-    """Show token usage and costs."""
+def _set_cost_limit(value_str: str) -> None:
+    """Set or show the session cost limit."""
+    from payp.config import load_config, save_config
+    from payp.ui.theme import Color
+
+    config = load_config()
+    if not value_str:
+        if config.max_session_cost_usd is not None:
+            console.print(f"  Cost limit: [{Color.BRAND_ALT}]${config.max_session_cost_usd:.2f}[/{Color.BRAND_ALT}]")
+        else:
+            console.print("  Cost limit: [dim]none (unlimited)[/dim]")
+        console.print("  [dim]Usage: /cost limit 5.00 | /cost limit off[/dim]")
+        return
+
+    if value_str.lower() in ("off", "none", "unlimited"):
+        config.max_session_cost_usd = None
+        save_config(config)
+        console.print("  Cost limit removed.")
+        return
+
+    try:
+        limit = float(value_str.lstrip("$"))
+    except ValueError:
+        console.print(f"[red]Invalid value: '{value_str}'. Use e.g. 5.00 or $10[/red]")
+        return
+
+    if limit <= 0:
+        console.print("[red]Limit must be positive.[/red]")
+        return
+
+    config.max_session_cost_usd = limit
+    save_config(config)
+    console.print(f"  Cost limit set to [{Color.BRAND_ALT}]${limit:.2f}[/{Color.BRAND_ALT}]")
+
+
+def _cmd_cost(args: str) -> None:
+    """Show token usage and costs, or set cost limit."""
+    parts = args.strip().split() if args.strip() else []
+
+    if parts and parts[0].lower() == "limit":
+        _set_cost_limit(parts[1] if len(parts) > 1 else "")
+        return
+
     from payp.core.llm import LLMClient
 
     client: LLMClient | None = _state.get("llm_client")
@@ -210,5 +251,13 @@ def _cmd_cost() -> None:
     table.add_row("Total tokens", f"{summary['total_tokens']:,}")
     table.add_row("Queries", str(summary["query_count"]))
     table.add_row("Estimated cost", f"${summary['total_cost_usd']:.4f}")
+
+    # Show cost limit if set
+    from payp.config import load_config
+    config = load_config()
+    if config.max_session_cost_usd is not None:
+        limit = config.max_session_cost_usd
+        pct = summary['total_cost_usd'] / limit * 100 if limit > 0 else 0
+        table.add_row("Cost limit", f"${limit:.2f} ({pct:.0f}% used)")
 
     console.print(table)

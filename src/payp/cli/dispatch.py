@@ -73,7 +73,7 @@ def _build_registry() -> dict[str, SlashCommand]:
         "/compact": SlashCommand(_wrap(context._cmd_compact), "compress older messages", False),
         "/context": SlashCommand(context._cmd_context, "show context window usage", True),
         "/more": SlashCommand(_wrap(context._cmd_more), "next 20 rows of last SELECT", False),
-        "/cost": SlashCommand(_wrap(context._cmd_cost), "token usage and costs", False),
+        "/cost": SlashCommand(context._cmd_cost, "token usage and costs", True),
         "/export": SlashCommand(export._cmd_export, "export session to markdown", True),
         "/skills": SlashCommand(_wrap(skills._cmd_skills), "browse available workflows", False),
         "/clear": SlashCommand(_wrap(help_cmd._cmd_clear), "clear the screen (also cls / cs)", False),

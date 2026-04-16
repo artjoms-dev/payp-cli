@@ -109,6 +109,55 @@ def _log_memory_backend_to_session(backend_name: str) -> None:
         pass
 
 
+def _build_toolbar() -> str:
+    """Build the persistent status line content."""
+    from payp.config import load_model_roles
+
+    parts: list[str] = []
+
+    # Model name
+    try:
+        roles = load_model_roles()
+        model = roles.executor
+        # Shorten: "azure/gpt-5.4" -> "gpt-5.4", "openrouter/google/gemma..." -> "gemma..."
+        short_model = model.rsplit("/", 1)[-1] if "/" in model else model
+        if len(short_model) > 20:
+            short_model = short_model[:17] + "..."
+        parts.append(short_model)
+    except Exception:
+        pass
+
+    # Token usage and cost
+    client = _state.get("llm_client")
+    if client:
+        ct = client.cost_tracker
+        total_tok = ct.total_input_tokens + ct.total_output_tokens
+        if total_tok > 0:
+            if total_tok >= 1000:
+                parts.append(f"{total_tok / 1000:.1f}k tok")
+            else:
+                parts.append(f"{total_tok} tok")
+        if ct.total_cost_usd > 0:
+            parts.append(f"${ct.total_cost_usd:.4f}")
+
+    # Context usage
+    chat = _state.get("chat_session")
+    if chat and hasattr(chat, "messages") and chat.messages:
+        try:
+            stats = chat.get_context_stats("")
+            pct = int(stats.usage_ratio * 100)
+            parts.append(f"ctx {pct}%")
+        except Exception:
+            pass
+
+    # Connection
+    conn_name = _state.get("active_connection")
+    if conn_name:
+        parts.append(conn_name)
+
+    return " \u2502 ".join(parts) if parts else ""
+
+
 def _interactive_loop() -> None:
     """Main interactive chat loop with LLM integration."""
     from prompt_toolkit import PromptSession
@@ -129,6 +178,7 @@ def _interactive_loop() -> None:
             "completion-menu.completion.current": "noinherit underline",
             "completion-menu.meta.completion": "noinherit #888888",
             "completion-menu.meta.completion.current": "noinherit #888888 underline",
+            "bottom-toolbar": "bg:#333333 #aaaaaa",
         }),
     )
 
@@ -137,7 +187,7 @@ def _interactive_loop() -> None:
 
     while True:
         try:
-            user_input = session.prompt("payp> ").strip()
+            user_input = session.prompt("payp> ", bottom_toolbar=_build_toolbar).strip()
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]Goodbye![/dim]")
             break

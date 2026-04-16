@@ -291,6 +291,20 @@ class LLMClient:
         self.cost_tracker.total_cost_usd += cost
         self.cost_tracker.query_count += 1
 
+    def check_cost_limit(self) -> tuple[bool, str]:
+        """Check if session cost limit is exceeded. Returns (exceeded, message)."""
+        from payp.config import load_config
+        config = load_config()
+        if config.max_session_cost_usd is None:
+            return False, ""
+        current = self.cost_tracker.total_cost_usd
+        limit = config.max_session_cost_usd
+        if current >= limit:
+            return True, f"Session cost ${current:.4f} has reached the limit of ${limit:.2f}. Run /cost to see details."
+        if current >= limit * 0.8:
+            return False, f"\u26a0 Session cost ${current:.4f} is at {current/limit*100:.0f}% of ${limit:.2f} limit."
+        return False, ""
+
     def get_cost_summary(self) -> dict[str, Any]:
         """Return current cost tracking summary."""
         ct = self.cost_tracker
