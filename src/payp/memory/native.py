@@ -6,6 +6,7 @@ under ~/.payp/knowledge/{connection}/tables/{table}.md (GLOBAL).
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from payp.storage.knowledge import (
@@ -17,6 +18,8 @@ from payp.storage.knowledge import (
     table_knowledge_path,
     write_table_knowledge,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class NativeMemoryBackend:
@@ -147,8 +150,7 @@ class NativeMemoryBackend:
                     write_table_knowledge(conn_name, table_name, content)
                     migrated += 1
             except Exception as exc:
-                import logging
-                logging.getLogger("payp.memory.native").exception("NativeMemory migration entry failed")
+                logger.exception("NativeMemory migration entry failed")
                 errors.append(f"{conn_name}/{table_name}: {exc}")
 
         return {"migrated": migrated, "errors": errors}

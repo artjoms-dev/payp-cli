@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import ipaddress
 import json as json_lib
+import logging
 import os
 from typing import Any
 from urllib.parse import urlparse
@@ -21,6 +22,8 @@ from urllib.parse import urlparse
 import httpx
 
 from payp.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 30
 MAX_BODY_BYTES = 50_000  # first 50KB of text
@@ -150,8 +153,7 @@ class WebFetchTool(BaseTool):
         try:
             parsed = urlparse(url)
         except Exception as e:
-            import logging
-            logging.getLogger("payp.tools.web_fetch").exception("URL parse failed")
+            logger.exception("URL parse failed")
             return ToolResult(success=False, error=f"Invalid URL: {e}")
 
         if parsed.scheme not in ("http", "https"):
@@ -220,8 +222,7 @@ class WebFetchTool(BaseTool):
                 summary="fetch_url: network error",
             )
         except Exception as e:
-            import logging
-            logging.getLogger("payp.tools.web_fetch").exception("fetch_url request failed")
+            logger.exception("fetch_url request failed")
             return ToolResult(
                 success=False,
                 error=f"{type(e).__name__}: {e}",

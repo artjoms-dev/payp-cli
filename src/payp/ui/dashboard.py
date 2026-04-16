@@ -18,63 +18,20 @@ from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
-# ── Accent palette ──
-C1 = (168, 0, 111)   # #A8006F
-C2 = (180, 224, 76)  # #B4E04C
+C1 = (168, 0, 111)
+C2 = (180, 224, 76)
 
-# ── Banner font ──
-# Pyfiglet font used for the "payp" logo.
-# Run `python -m payp.ui.dashboard` to preview every candidate with the gradient.
 _BANNER_FONT = "doh"
-
-# Logo text. Pyfiglet handles both cases; uppercase reads bolder in `univers`.
 _BANNER_TEXT = "payp"
-
-# Internal pyfiglet canvas width (explicit, stable across environments).
-# Keeping this at 80 preserves the intended `doh` layout while avoiding
-# environment-dependent wrapping behavior.
 _BANNER_RENDER_WIDTH = 80
-
-# Soft colored glow rendered behind the banner glyphs.
-# Set to 0.0 to disable; 0.18-0.25 gives a clearly-visible tinted canvas.
 _BANNER_BACKDROP = 0.20
 
-# Gamma exponent for sRGB-ish blending. 2.2 gives noticeably smoother
-# mid-tones than naive linear RGB (the magenta-to-lime middle stops
-# being muddy brown and becomes a cleaner desaturated transition).
+# sRGB-ish gamma for blending; 2.2 keeps magenta-to-lime midtones from going muddy brown.
 _GAMMA = 2.2
 
-# Shortlist of fonts that render "payp" at a terminal-friendly size.
-# Feel free to prune / extend; the preview script iterates this list.
-_CANDIDATE_FONTS: tuple[str, ...] = (
-    "ansi_shadow",
-    "ansi_regular",
-    "slant",
-    "small_slant",
-    "big",
-    "block",
-    "banner3",
-    "bulbhead",
-    "chunky",
-    "colossal",
-    "doom",
-    "epic",
-    "isometric1",
-    "larry3d",
-    "ogre",
-    "roman",
-    "small",
-    "speed",
-    "standard",
-    "univers",
-)
-
-# Ordered fallback chain, wide/tall -> narrow/short. The first entry that
-# fits in `console.size.width` AND is <= 1/3 of `console.size.height` wins.
-# Used when the configured `_BANNER_FONT` renders larger than the viewport
-# (e.g. `doh` is 50 rows tall, far exceeding a typical 24-row terminal —
-# without this, the banner scrolls off-screen and the animator's cursor-up
-# math lands in the middle of wrapped content instead of the banner top).
+# Ordered fallback chain when the configured font would overflow the viewport.
+# doh is 50 rows tall; on a standard terminal it would scroll off-screen and
+# break the animator's cursor-up math (line wrapping emits no newlines).
 _BANNER_FALLBACKS: tuple[str, ...] = (
     "univers",
     "ansi_regular",
@@ -114,10 +71,9 @@ def pick_banner_for_console(
 
     Tries `_BANNER_FONT` first, then walks `_BANNER_FALLBACKS` until it
     finds one that fits within the console width and a third of the height.
-    A too-tall or too-wide banner would wrap in the terminal — since line
+    A too-tall or too-wide banner would wrap in the terminal; since line
     wrapping doesn't emit `\\n`, the row counter and animator cursor-up
-    math would both be off, producing the broken staircase effect seen
-    with `doh` on a standard-size terminal.
+    math would both be off, producing a broken staircase effect.
     """
     try:
         max_w = console.size.width
@@ -136,16 +92,11 @@ def pick_banner_for_console(
             continue
         if _fits_viewport(lines, max_w, max_h):
             return lines
-    # Last resort: plain uppercase text as a single row.
     return [text]
 
 
-BANNER: list[str] = _render_banner_lines(_BANNER_TEXT)
-
-
 def _lerp(c1: tuple, c2: tuple, t: float) -> tuple:
-    # Gamma-corrected blend so mid-tones don't go muddy.
-    # Linear-RGB interpolation, then encode back to sRGB-ish output.
+    # Linear-RGB interpolation, encoded back to sRGB so mid-tones don't go muddy.
     def _blend(a: int, b: int) -> int:
         la = (a / 255.0) ** _GAMMA
         lb = (b / 255.0) ** _GAMMA
@@ -159,8 +110,6 @@ def _rgb(r: int, g: int, b: int) -> Style:
 
 
 def _rgb_bg(fg: tuple[int, int, int], backdrop: float) -> Style:
-    # Glyph color plus a dim version of the same hue as background,
-    # which produces a soft colored glow behind every cell.
     r, g, b = fg
     br, bg, bb = int(r * backdrop), int(g * backdrop), int(b * backdrop)
     return Style(
@@ -169,11 +118,8 @@ def _rgb_bg(fg: tuple[int, int, int], backdrop: float) -> Style:
     )
 
 
-# ── Palette LUT ──
-# Precompute the gradient once so the per-cell hot path is a single list
-# lookup instead of a gamma-corrected lerp + two Style allocations per cell.
-# Memory footprint is bounded (`_LUT_SIZE` Style objects, ~10-20 KB total),
-# independent of how long the animation runs.
+# Precomputed gradient palette so per-cell animation avoids a gamma-corrected
+# lerp + two Style allocations every frame.
 _LUT_SIZE = 256
 _FG_LUT: list[Style] = []
 _BG_LUT: list[Style] = []
@@ -206,7 +152,6 @@ def _gradient(s: str, c1: tuple = C1, c2: tuple = C2) -> Text:
 
 
 def _triangle(x: float) -> float:
-    # Ping-pong wave: 0 at x=0, 1 at x=0.5, 0 at x=1, period 1.
     x = x - int(x)
     return 1.0 - abs(2.0 * x - 1.0)
 
@@ -229,8 +174,7 @@ def _gradient_2d(
         backdrop = _BANNER_BACKDROP
     use_bg = backdrop > 0.0
 
-    # Fast path: default palette / default backdrop can use the precomputed
-    # LUT and skip per-cell Style allocation entirely.
+    # Default palette and backdrop hit the precomputed LUT path, skipping per-cell Style allocation.
     use_lut = c1 is C1 and c2 is C2 and (not use_bg or backdrop == _BANNER_BACKDROP)
     lut = _BG_LUT if use_bg else _FG_LUT
     lut_last = _LUT_SIZE - 1
@@ -241,7 +185,6 @@ def _gradient_2d(
     max_diag = max((max_cols - 1) + (max_rows - 1), 1)
     period = 2 * max_diag
     for row_i, line in enumerate(lines):
-        # Pad to max_cols so the backdrop forms a clean rectangle.
         padded = line.ljust(max_cols) if use_bg else line
         for col_i, ch in enumerate(padded):
             x = (col_i + row_i + phase * max_diag) / period
@@ -264,100 +207,26 @@ def _gradient_2d(
     return result
 
 
-def _animate_banner(
-    console: Console,
-    lines: list[str] | None = None,
-    *,
-    cycle_seconds: float = 2.5,
-    cycles: int = 2,
-    fps: int = 24,
-) -> bool:
-    """Slow multi-cycle gradient sweep rendered in place over the banner.
+def _build_frame_console(width: int) -> tuple[Console, StringIO]:
+    """Build a Rich console that writes into a StringIO buffer.
 
-    `cycle_seconds` * `cycles` is the total runtime (default 5 s). The ping-pong
-    gradient loops for the full duration and then settles on the static rest
-    frame. Ctrl+C breaks out early to the rest frame cleanly.
-
-    Implementation notes:
-    - Uses cursor-up ANSI (`\\x1b[nF`) to overwrite the banner block each frame,
-      avoiding rich.Live's clear-line flash that was showing through the backdrop.
-    - No frame cache — each frame is built, written, and dropped, so memory is
-      constant regardless of cycle count. The palette LUT built at import time
-      keeps the per-cell hot path allocation-free.
-
-    Returns True when the banner was drawn, False if the terminal can't be
-    animated and the caller should fall back to a plain print.
+    Uses `\\x1b[E` (Cursor Next Line) instead of `\\n` so emitted frames
+    don't scroll the viewport when the cursor is near the bottom.
     """
-    if (
-        cycle_seconds <= 0
-        or cycles <= 0
-        or fps <= 0
-        or not console.is_terminal
-        or console.is_dumb_terminal
-        or console.color_system is None
-    ):
-        return False
-
-    lines = lines or BANNER
-    n_rows = len(lines)
-    total_seconds = cycle_seconds * cycles
-    frames = max(int(total_seconds * fps), 1)
-    frame_delay = total_seconds / frames
-    # Full phase traversal covers `cycles` ping-pongs; triangle period == 2.
-    phase_span = 2.0 * cycles
-    out = console.file
-
-    # First frame claims the vertical space so cursor-up overwrites stay aligned.
-    console.print(_gradient_2d(lines, phase=0.0), highlight=False)
-
-    try:
-        for i in range(1, frames):
-            time.sleep(frame_delay)
-            phase = phase_span * i / frames
-            out.write(f"\x1b[{n_rows}F")
-            out.flush()
-            console.print(_gradient_2d(lines, phase=phase), highlight=False)
-    except KeyboardInterrupt:
-        # Let the rest frame render so the banner looks intentional, then
-        # re-raise so the caller's normal Ctrl+C path still triggers.
-        out.write(f"\x1b[{n_rows}F")
-        out.flush()
-        console.print(_gradient_2d(lines, phase=0.0), highlight=False)
-        raise
-
-    # Settle on the static rest frame — matches what `animate=False` would
-    # print, so downstream layout doesn't depend on whether animation ran.
-    time.sleep(frame_delay)
-    out.write(f"\x1b[{n_rows}F")
-    out.flush()
-    console.print(_gradient_2d(lines, phase=0.0), highlight=False)
-    return True
-
-
-# ── Background animator ──────────────────────────────────────────────
-
-def _banner_frame_payload(lines: list[str], phase: float) -> str:
-    """Serialize a banner frame to ANSI, joined by CNL so it doesn't scroll.
-
-    Uses `\\x1b[E` (Cursor Next Line) instead of `\\n` between rows — moving
-    the cursor down to column 1 without emitting a linefeed that could cause
-    the terminal to scroll the viewport when cursor is already near the bottom.
-    """
-    frame = _gradient_2d(lines, phase=phase)
-    max_cols = max((len(l) for l in lines), default=1)
-    tmp = Console(
-        file=StringIO(),
-        force_terminal=True,
-        color_system="truecolor",
-        width=max_cols + 4,
-        legacy_windows=False,
-        emoji=False,
-        markup=False,
-        highlight=False,
+    buf = StringIO()
+    return (
+        Console(
+            file=buf,
+            force_terminal=True,
+            color_system="truecolor",
+            width=width,
+            legacy_windows=False,
+            emoji=False,
+            markup=False,
+            highlight=False,
+        ),
+        buf,
     )
-    tmp.print(frame, end="")
-    ansi: str = tmp.file.getvalue()  # type: ignore[attr-defined]
-    return ansi.rstrip("\n").replace("\n", "\x1b[E")
 
 
 class BannerAnimator:
@@ -375,10 +244,6 @@ class BannerAnimator:
     Coexists with prompt_toolkit because the save/restore pair leaves the
     cursor where the prompt put it, and writes land on rows above the prompt
     that prompt_toolkit doesn't touch.
-
-    Memory stays flat — one ANSI string is built and dropped per frame, and
-    the palette LUT (built once at import) keeps the per-cell path
-    allocation-free. No frame cache.
     """
 
     def __init__(
@@ -392,15 +257,14 @@ class BannerAnimator:
     ) -> None:
         self.console = console
         self.rows_above = rows_above
-        # Use the same banner that was printed to the terminal so the cursor
-        # math lines up. Defaults to `pick_banner_for_console` which applies
-        # the width/height fallback — calling with explicit `lines` lets the
-        # caller reuse a banner they already chose (avoiding a double pick).
         self.lines = lines if lines is not None else pick_banner_for_console(console)
         self.cycle_seconds = cycle_seconds
         self.fps = fps
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        max_cols = max((len(l) for l in self.lines), default=1)
+        self._frame_console, self._frame_buf = _build_frame_console(max_cols + 4)
+        self._last_payload: str | None = None
 
     def start(self) -> bool:
         if self._thread is not None or self._stop.is_set():
@@ -411,9 +275,6 @@ class BannerAnimator:
             or self.console.color_system is None
         ):
             return False
-        # Viewport sanity checks: banner must fit in width AND height, and
-        # `rows_above` must be plausible. If anything is off, skip animation
-        # entirely — better a static banner than a broken redraw.
         try:
             size = self.console.size
             height, width = size.height, size.width
@@ -432,12 +293,6 @@ class BannerAnimator:
         return True
 
     def stop(self) -> None:
-        """Signal the thread to stop and wait briefly for it to finish a frame.
-
-        The last frame drawn stays on screen at whatever phase the loop
-        happened to be at. No settling redraw — by the time stop is called
-        the prompt has advanced the cursor and our `rows_above` is stale.
-        """
         self._stop.set()
         t = self._thread
         if t is not None:
@@ -450,23 +305,15 @@ class BannerAnimator:
             start = time.perf_counter()
             interval = 1.0 / self.fps
             while not self._stop.is_set():
-                # Resize invalidates the cursor-up math — already-printed
-                # rows may have been re-wrapped by the terminal (visual
-                # rows change without any `\n` being written), so our
-                # `rows_above` no longer points at the banner top. Stop
-                # cleanly rather than keep painting the wrong place.
                 if self._current_size() != start_size:
                     return
                 elapsed = time.perf_counter() - start
                 phase = (elapsed / self.cycle_seconds) * 2.0
-                # Wrap into [0, 2) without drifting via float mod.
                 phase = phase - int(phase / 2.0) * 2.0
                 self._draw(phase)
                 if self._stop.wait(interval):
                     break
         except Exception:
-            # Animator is best-effort. Never propagate a thread error into
-            # the CLI — just exit the loop and leave the banner static.
             pass
 
     def _current_size(self) -> tuple[int, int]:
@@ -476,14 +323,25 @@ class BannerAnimator:
         except Exception:
             return 0, 0
 
+    def _build_payload(self, phase: float) -> str:
+        frame = _gradient_2d(self.lines, phase=phase)
+        self._frame_buf.seek(0)
+        self._frame_buf.truncate(0)
+        self._frame_console.print(frame, end="")
+        ansi = self._frame_buf.getvalue()
+        return ansi.rstrip("\n").replace("\n", "\x1b[E")
+
     def _draw(self, phase: float) -> None:
-        payload = _banner_frame_payload(self.lines, phase)
+        payload = self._build_payload(phase)
+        if payload == self._last_payload:
+            return
+        self._last_payload = payload
         seq = (
-            "\x1b7"                            # DEC save cursor
-            + f"\x1b[{self.rows_above}A"       # cursor up
-            + "\r"                              # column 1
+            "\x1b7"
+            + f"\x1b[{self.rows_above}A"
+            + "\r"
             + payload
-            + "\x1b8"                           # DEC restore cursor
+            + "\x1b8"
         )
         try:
             self.console.file.write(seq)
@@ -491,8 +349,6 @@ class BannerAnimator:
         except Exception:
             self._stop.set()
 
-
-# ── Public API ─────────────────────────────────────────────────────────
 
 def render_status_dashboard(
     console: Console,
@@ -505,25 +361,15 @@ def render_status_dashboard(
     mode: str,
     snapshot_count: int,
     session_count: int | None = None,
-    animate: bool = False,
 ) -> None:
-    """Render the welcome screen.
+    """Render the welcome screen as a single static frame.
 
-    `animate=False` (the default) prints the banner as a single static frame
-    so the whole welcome appears instantly — the continuous shimmer is run
-    separately by `BannerAnimator` while the REPL waits for input.
+    The continuous shimmer is driven separately by `BannerAnimator` while
+    the REPL waits for input.
     """
-
-    # ── Banner ──
-    # Pick a banner that fits the current terminal — the configured
-    # `_BANNER_FONT` may overflow (e.g. `doh` is 50 rows tall); fallbacks
-    # step down to progressively smaller fonts until one fits.
     lines = pick_banner_for_console(console)
-    drawn = _animate_banner(console, lines=lines) if animate else False
-    if not drawn:
-        console.print(_gradient_2d(lines), highlight=False)
+    console.print(_gradient_2d(lines), highlight=False)
 
-    # ── Tagline ──
     tagline = Text()
     tagline.append(f"v{version}", style="dim")
     tagline.append("  ")
@@ -531,7 +377,6 @@ def render_status_dashboard(
     console.print(tagline, highlight=False)
     console.print()
 
-    # ── Info panel ──
     grid = Table.grid(padding=(0, 2))
     grid.add_column(justify="right", no_wrap=True, width=12, style="dim")
     grid.add_column(justify="left")
@@ -555,7 +400,6 @@ def render_status_dashboard(
             ),
         )
 
-    # Database — only when connected
     if connection_name and connection_status:
         r, g, b = C2
         db_text = Text()
@@ -563,7 +407,7 @@ def render_status_dashboard(
         db_text.append(f"  ({connection_status})", style="dim")
         grid.add_row("Database", db_text)
     elif connection_name:
-        grid.add_row("Database", Text(f"{connection_name} — not connected", style="dim"))
+        grid.add_row("Database", Text(f"{connection_name} - not connected", style="dim"))
 
     # Mode
     mode_colors = {
@@ -616,23 +460,3 @@ def render_compact_hint(console: Console) -> None:
     console.print()
 
 
-def preview_banner_fonts(console: Console | None = None, text: str = "payp") -> None:
-    """Render every candidate font with the brand gradient so you can pick one.
-
-    Change `_BANNER_FONT` at the top of this module to the one you like.
-    """
-    console = console or Console()
-    for font in _CANDIDATE_FONTS:
-        try:
-            lines = _render_banner_lines(text=text, font=font)
-        except Exception as exc:
-            console.rule(f"[red]{font} — {exc}[/red]")
-            continue
-        marker = "  ← current" if font == _BANNER_FONT else ""
-        console.rule(f"[bold]{font}[/bold]{marker}")
-        console.print(_gradient_2d(lines), highlight=False)
-        console.print()
-
-
-if __name__ == "__main__":
-    preview_banner_fonts()

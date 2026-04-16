@@ -1,4 +1,4 @@
-"""Slash command registry — single source of truth for payp CLI commands.
+"""Slash command registry - single source of truth for payp CLI commands.
 
 Both _handle_command (routing) and _slash_completer (autocomplete) read from
 the same SLASH_COMMANDS dict so adding a new command requires touching exactly
@@ -24,7 +24,7 @@ class SlashCommand:
 
     `subcommands` is an optional tuple of `(trigger, help_meta)` pairs that
     the completer surfaces after the user has typed the command + a space.
-    Triggers may contain spaces (e.g. `"scan docker"`) — the completer
+    Triggers may contain spaces (e.g. `"scan docker"`) - the completer
     replaces the entire arg text, so multi-token subcommands autocomplete
     in one tab.
     """
@@ -44,7 +44,7 @@ def _wrap(fn: Callable[[], None]) -> Callable[[str], None]:
 
 def _build_registry() -> dict[str, SlashCommand]:
     """Build SLASH_COMMANDS lazily to avoid circular imports at module load time."""
-    # Import command modules here — they all import from state/runtime, never from dispatch
+    # Import command modules here - they all import from state/runtime, never from dispatch
     from payp.cli.commands import (
         context,
         db,
@@ -164,20 +164,11 @@ def _handle_command(cmd: str) -> None:
         except KeyboardInterrupt:
             console.print("[dim]Cancelled.[/dim]")
         except Exception as e:
-            # Safety net: any uncaught failure inside a slash command
-            # lands here. We log the full traceback and render a Panel
-            # so users always know where to look instead of seeing a
-            # raw stack dump (or nothing, if a handler swallowed output).
             from payp.ui.errors import show_error
 
             short = str(e).strip() or type(e).__name__
-            show_error(
-                f"Command {command} failed",
-                short,
-                exc=e,
-                hint=None,
-                logger_name=f"payp.cli{command.replace('/', '.')}",
-            )
+            logger_name = f"payp.cli.commands.{command.lstrip('/')}"
+            show_error(f"Command {command} failed", short, exc=e, logger_name=logger_name)
     else:
         console.print(
             f"[red]Unknown command: {command}[/red]. Type /help for available commands."

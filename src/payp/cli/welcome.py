@@ -27,10 +27,7 @@ class _RowCountingFile:
         self._inner.flush()
 
     def isatty(self) -> bool:
-        try:
-            return self._inner.isatty()
-        except Exception:
-            return False
+        return self._inner.isatty()
 
     def fileno(self) -> int:
         return self._inner.fileno()
@@ -48,18 +45,13 @@ def _show_welcome() -> None:
         should_prompt_model_setup,
     )
 
-    # True first-run: no models AND no connections → full onboarding
     if is_first_run():
         run_onboarding(console)
         return
 
-    # Returning user but no model → prompt just for model
     if should_prompt_model_setup():
         prompt_model_setup_only(console)
 
-    # Swap console.file for a row counter so we know exactly how many rows
-    # sit between the REPL prompt line and the banner's top row. All writes
-    # still hit the real terminal; we just tally newlines on the way through.
     original_file = console.file
     counter = _RowCountingFile(original_file)
     console.file = counter  # type: ignore[assignment]
@@ -68,9 +60,6 @@ def _show_welcome() -> None:
     finally:
         console.file = original_file  # type: ignore[assignment]
 
-    # Start the continuous banner shimmer. Animator cursor-ups `counter.rows`
-    # lines from the prompt to reach the banner top row. It will be stopped
-    # by the REPL on first user submit.
     animator = BannerAnimator(console, rows_above=counter.rows)
     if animator.start():
         _state["banner_anim"] = animator
@@ -115,9 +104,6 @@ def _render_welcome_body() -> None:
 
     _maybe_suggest_docker_scan()
 
-    # Legacy knowledge dir notice — wording depends on whether migration
-    # has already happened. If global has data, the legacy dir is just dead
-    # weight and the message is softer.
     from payp.storage.knowledge import (
         get_knowledge_dir,
         has_legacy_knowledge,
@@ -133,7 +119,7 @@ def _render_welcome_body() -> None:
             )
         else:
             console.print(
-                "[yellow]⚠[/yellow] Found legacy [dim]./payp/knowledge/[/dim] — "
+                "[yellow]⚠[/yellow] Found legacy [dim]./payp/knowledge/[/dim] - "
                 "knowledge is now global. Run [bold]/knowledge migrate-legacy[/bold] to move it."
             )
 

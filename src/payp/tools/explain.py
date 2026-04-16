@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class ExplainTool(BaseTool):
@@ -51,6 +54,5 @@ class ExplainTool(BaseTool):
             )
 
         except Exception as e:
-            import logging
-            logging.getLogger("payp.tools.explain").exception("ExplainTool failed")
+            logger.exception("ExplainTool failed")
             return ToolResult(success=False, error=str(e), summary=f"EXPLAIN failed: {e}")

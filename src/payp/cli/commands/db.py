@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from payp.cli.runtime import (
     _run_async,
@@ -14,6 +14,9 @@ from payp.cli.runtime import (
     prompt_required,
 )
 from payp.cli.state import _state, console
+
+if TYPE_CHECKING:
+    from payp.db.docker_scan import DetectedDb
 
 
 def _cmd_db(args: str) -> None:
@@ -232,7 +235,7 @@ def _scan_docker_and_prompt() -> None:
     _save_detected_connection(choice)
 
 
-def _save_detected_connection(detected: Any) -> None:
+def _save_detected_connection(detected: DetectedDb) -> None:
     """Persist a detected container as a named connection, then connect."""
     from payp.config import list_connections, save_connection_profile, save_credential
     from payp.models import ConnectionCredential, ConnectionProfile
@@ -241,7 +244,6 @@ def _save_detected_connection(detected: Any) -> None:
     existing = set(list_connections())
     default_name = detected.container_name
     if default_name in existing:
-        # Suffix with a counter until we find a free slot.
         i = 2
         while f"{default_name}-{i}" in existing:
             i += 1
@@ -626,13 +628,10 @@ async def _connect_to_db(
             fk_graph = SchemaGraph()
         _state["fk_graph"] = fk_graph
     except Exception as e:
-        import logging
-        logging.getLogger("payp.cli.commands.db").exception("Schema discovery failed")
-        from rich.panel import Panel
+        from payp.ui.errors import show_error
         raw = str(e)
-        # MongoDB OperationFailure messages cram the human text and a
-        # "full error: {dict}" dump on one line. The dump is noise at
-        # the CLI level — trim it so the user sees just the sentence.
+        # MongoDB OperationFailure cramming "full error: {dict}" onto the same line
+        # is noise at the CLI level - keep only the sentence before it.
         short_error = raw.split(", full error:", 1)[0].strip()
 
         msg_lower = raw.lower()
@@ -645,32 +644,23 @@ async def _connect_to_db(
             hint = (
                 "The server rejected an unauthenticated request. "
                 "It looks like this database requires credentials.\n\n"
-                f"[dim]Next steps:[/dim]\n"
-                f"  • [bold]/credentials {name}[/bold] — add username and password\n"
-                "  • [bold]/db[/bold] -> [bold]new[/bold] — recreate with "
-                "authentication enabled"
+                f"Next steps:\n"
+                f"  - /credentials {name} to add username and password\n"
+                "  - /db -> new to recreate with authentication enabled"
             )
         else:
             hint = (
                 "The connection stayed open but schema metadata could "
-                "not be loaded.\n\n"
-                "[dim]Next step:[/dim] [bold]/schema --refresh[/bold] "
-                "once the underlying issue is resolved."
+                "not be loaded.\n"
+                "Next step: /schema --refresh once the underlying issue is resolved."
             )
 
-        body = (
-            f"[red]{short_error}[/red]\n\n"
-            f"[yellow]{hint}[/yellow]"
-        )
-        console.print()
-        console.print(
-            Panel(
-                body,
-                title="[bold red]Schema discovery failed[/bold red]",
-                border_style="red",
-                padding=(1, 2),
-                expand=True,
-            )
+        show_error(
+            "Schema discovery failed",
+            short_error,
+            exc=e,
+            hint=hint,
+            logger_name=__name__,
         )
         # Roll the half-initialised connection back so the user does not
         # end up chatting with a DB we could not introspect.

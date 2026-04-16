@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class QueryTool(BaseTool):
@@ -74,6 +77,5 @@ class QueryTool(BaseTool):
             return ToolResult(success=True, data=data, summary=summary)
 
         except Exception as e:
-            import logging
-            logging.getLogger("payp.tools.query").exception("QueryTool failed")
+            logger.exception("QueryTool failed")
             return ToolResult(success=False, error=str(e), summary=f"Query failed: {e}")

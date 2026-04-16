@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +30,8 @@ from rich.progress import (
 )
 
 from payp.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_EXPORT_DIR = Path("./exports")
 
@@ -170,9 +173,7 @@ class ExportTool(BaseTool):
             )
 
         except Exception as e:
-            import logging
-            logging.getLogger("payp.tools.export").exception("ExportTool failed")
-            # Clean up partial file on any failure.
+            logger.exception("ExportTool failed")
             if partial_path.exists():
                 try:
                     partial_path.unlink()

@@ -7,6 +7,7 @@ They are the safety net that LLM memory cannot provide.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import UTC, datetime
 from hashlib import md5
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class SnapshotBeforeDeleteTool(BaseTool):
@@ -139,8 +142,7 @@ class SnapshotBeforeDeleteTool(BaseTool):
             )
 
         except Exception as e:
-            import logging
-            logging.getLogger("payp.tools.snapshot").exception("SnapshotBeforeDeleteTool failed")
+            logger.exception("SnapshotBeforeDeleteTool failed")
             return ToolResult(success=False, error=str(e), summary=f"Snapshot failed: {e}")
 
 
@@ -231,8 +233,7 @@ class RestoreSnapshotTool(BaseTool):
             )
 
         except Exception as e:
-            import logging
-            logging.getLogger("payp.tools.snapshot").exception("RestoreSnapshotTool failed")
+            logger.exception("RestoreSnapshotTool failed")
             return ToolResult(success=False, error=str(e), summary=f"Restore failed: {e}")
 
 

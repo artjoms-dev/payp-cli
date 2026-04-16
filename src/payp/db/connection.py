@@ -11,6 +11,7 @@ is_connected, db_version) is identical across drivers.
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -20,6 +21,8 @@ import psycopg
 from psycopg.rows import dict_row
 
 from payp.models import ConnectionCredential, ConnectionProfile, DbType, QueryResult
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionError(Exception):
@@ -96,8 +99,7 @@ class _PostgresDriver:
                 row_factory=dict_row,
             )
         except Exception as e:
-            import logging
-            logging.getLogger("payp.db.connection").exception("Postgres connect failed")
+            logger.exception("Postgres connect failed")
             raise ConnectionError(f"Failed to connect to {self.profile.name}: {e}") from e
 
         result = await self.execute_raw("SELECT version()")
@@ -248,8 +250,7 @@ class ConnectionManager:
             if self._should_auto_reconnect(e):
                 if await self._auto_reconnect():
                     return await self._driver.execute_raw(sql, params)
-            import logging
-            logging.getLogger("payp.db.connection").exception("execute_raw failed")
+            logger.exception("execute_raw failed")
             raise
 
     async def stream_raw(
@@ -275,8 +276,7 @@ class ConnectionManager:
             if self._should_auto_reconnect(e):
                 if await self._auto_reconnect():
                     return await self._driver.execute(sql, limit)
-            import logging
-            logging.getLogger("payp.db.connection").exception("execute failed")
+            logger.exception("execute failed")
             raise
 
     def _should_auto_reconnect(self, exc: BaseException) -> bool:

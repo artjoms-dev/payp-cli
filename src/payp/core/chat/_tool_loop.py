@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 from payp.ui.streaming import display_tool_call, display_tool_result, stream_response
@@ -9,6 +10,8 @@ from ._tool_io import parse_tool_calls, summarize_tool_response
 
 if TYPE_CHECKING:
     from ._facade import ChatSession
+
+logger = logging.getLogger(__name__)
 
 
 MAX_TOOL_ROUNDS = 30  # Prevent infinite tool call loops (Claude Code uses 30-50)
@@ -41,11 +44,7 @@ async def run_tool_loop(
             try:
                 session.session.log_assistant(content, model=session.llm.get_executor_model())
             except Exception:
-                import logging
-                logging.getLogger("payp.core.chat.tool_loop").exception(
-                    "session log_assistant failed"
-                )
-                # Logging must never break the chat loop.
+                logger.exception("session log_assistant failed")
 
         # If no tool calls, we're done
         if not raw_tool_calls:
@@ -168,10 +167,7 @@ async def run_tool_loop(
                     summary=_tc_sum,
                 )
             except Exception:
-                import logging
-                logging.getLogger("payp.core.chat.tool_loop").exception(
-                    "session log_tool_call failed"
-                )
+                logger.exception("session log_tool_call failed")
 
             # Wrap the payload in an untrusted envelope so a row value
             # like "ignore previous instructions" is received as DATA,

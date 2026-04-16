@@ -29,8 +29,7 @@ class DetectedDb:
     password: str | None
 
 
-# Image name prefix -> dialect. Longer prefixes first so "mariadb" wins
-# over a hypothetical "mar*" match.
+# Longer prefixes first so "mariadb" is matched before "mar" ever could be.
 IMAGE_MAP: tuple[tuple[str, DbType], ...] = (
     ("mariadb", DbType.MYSQL),
     ("mysql", DbType.MYSQL),
@@ -108,7 +107,6 @@ def _build_postgres(env: dict[str, str], port: int, image: str, name: str) -> De
 
 
 def _build_mysql(env: dict[str, str], port: int, image: str, name: str) -> DetectedDb:
-    # MariaDB aliases both prefixes; prefer the explicit user if present.
     user = env.get("MYSQL_USER") or env.get("MARIADB_USER") or "root"
     database = (
         env.get("MYSQL_DATABASE") or env.get("MARIADB_DATABASE") or "mysql"
@@ -130,7 +128,6 @@ def _build_mysql(env: dict[str, str], port: int, image: str, name: str) -> Detec
 
 
 def _build_oracle(env: dict[str, str], port: int, image: str, name: str) -> DetectedDb:
-    # gvenzl/oracle-xe: APP_USER / APP_USER_PASSWORD, fallback to SYS / ORACLE_PASSWORD.
     app_user = env.get("APP_USER")
     if app_user:
         user = app_user
@@ -228,7 +225,6 @@ def _detect_one(
     default_port = DEFAULT_PORTS[dialect]
     host_port = _host_port_for(ports, default_port)
     if host_port is None:
-        # Port not published to the host - skip, user can't reach it anyway.
         return None
     return _BUILDERS[dialect](env, host_port, image, name)
 

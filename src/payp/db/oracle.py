@@ -7,6 +7,7 @@ the rest of payp can share query strings across dialects.
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from collections.abc import AsyncIterator
@@ -15,6 +16,8 @@ from typing import Any
 import oracledb
 
 from payp.models import ConnectionCredential, ConnectionProfile, QueryResult
+
+logger = logging.getLogger(__name__)
 
 _PLACEHOLDER_RE = re.compile(r"%s")
 
@@ -89,8 +92,7 @@ class OracleDriver:
                 tcp_connect_timeout=self.profile.timeout,
             )
         except Exception as e:
-            import logging
-            logging.getLogger("payp.db.oracle").exception("Oracle connect failed")
+            logger.exception("Oracle connect failed")
             raise ConnectionError(f"Failed to connect to {self.profile.name}: {e}") from e
 
         rows = await self.execute_raw(

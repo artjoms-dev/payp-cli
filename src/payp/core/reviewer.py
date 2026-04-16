@@ -31,12 +31,15 @@ Hardened design (see docs/reviewer_security.md for rationale):
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
 from payp.core.llm import LLMClient
+
+logger = logging.getLogger(__name__)
 
 
 class Verdict(str, Enum):
@@ -241,11 +244,10 @@ class Reviewer:
             )
         except Exception as e:
             # Provider didn't accept JSON schema format, or network failed.
-            # Retry once without response_format — some providers on
+            # Retry once without response_format - some providers on
             # openrouter don't support it yet. If that also fails, fail
             # closed.
-            import logging
-            logging.getLogger("payp.core.reviewer").exception("Reviewer first attempt failed")
+            logger.exception("Reviewer first attempt failed")
             try:
                 response = await self.llm.chat(
                     messages,
@@ -253,7 +255,7 @@ class Reviewer:
                     stream=False,
                 )
             except Exception as e2:
-                logging.getLogger("payp.core.reviewer").exception("Reviewer retry failed")
+                logger.exception("Reviewer retry failed")
                 return Review(
                     verdict=Verdict.HARD_BLOCK,
                     reason=f"Reviewer unreachable ({e2}). Cannot verify safety.",
@@ -318,10 +320,7 @@ class Reviewer:
             )
             secondary = _parse_review(response.content or "", executor_model)
         except Exception as e:
-            import logging
-            logging.getLogger("payp.core.reviewer").exception(
-                "review_with_consensus second reviewer failed"
-            )
+            logger.exception("review_with_consensus second reviewer failed")
             secondary = Review(
                 verdict=Verdict.HARD_BLOCK,
                 reason=f"Second reviewer unreachable ({e}).",

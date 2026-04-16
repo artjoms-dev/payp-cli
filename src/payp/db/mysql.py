@@ -6,6 +6,7 @@ psycopg3-flavoured API used by the rest of payp.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -13,6 +14,8 @@ from typing import Any
 import aiomysql
 
 from payp.models import ConnectionCredential, ConnectionProfile, QueryResult
+
+logger = logging.getLogger(__name__)
 
 _MYSQL_CONN_MARKERS = (
     "lost connection",
@@ -72,8 +75,7 @@ class MySQLDriver:
                 charset="utf8mb4",
             )
         except Exception as e:
-            import logging
-            logging.getLogger("payp.db.mysql").exception("MySQL connect failed")
+            logger.exception("MySQL connect failed")
             raise ConnectionError(f"Failed to connect to {self.profile.name}: {e}") from e
 
         rows = await self.execute_raw("SELECT VERSION() AS version")

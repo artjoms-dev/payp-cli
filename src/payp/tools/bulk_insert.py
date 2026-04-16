@@ -6,9 +6,12 @@ Avoids burning tool-round budget on row-by-row inserts.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class BulkInsertTool(BaseTool):
@@ -90,8 +93,7 @@ class BulkInsertTool(BaseTool):
                 await conn.execute_raw(sql, params)
                 inserted += len(batch)
             except Exception as e:
-                import logging
-                logging.getLogger("payp.tools.bulk_insert").exception("BulkInsertTool batch failed")
+                logger.exception("BulkInsertTool batch failed")
                 err_str = str(e)
                 errors.append(f"batch {batch_start}-{batch_start + len(batch)}: {err_str[:150]}")
                 # Oracle IDENTITY drift recovery + fallback to per-row inserts

@@ -6,10 +6,13 @@ the model's context limit. Inspired by Claude Code's /compact behavior.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 import litellm
+
+logger = logging.getLogger(__name__)
 
 # Start compacting when we hit this fraction of the model's context window
 COMPACT_THRESHOLD = 0.75
@@ -135,8 +138,7 @@ async def compact_messages(
         response = await llm_client.chat(summary_messages, model=model, stream=False)
         summary_text = response.content or "## Conversation Summary\n(summary failed)"
     except Exception as e:
-        import logging
-        logging.getLogger("payp.core.compaction").exception("_compress_via_llm failed")
+        logger.exception("_compress_via_llm failed")
         summary_text = f"## Conversation Summary\n(summary failed: {e})"
 
     # Replace old messages with a single summary assistant message + keep recent

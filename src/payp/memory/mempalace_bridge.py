@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Section → hall mapping
@@ -117,8 +120,7 @@ class MemPalaceBackend:
                     include=["documents", "metadatas"],
                 )
             except Exception:
-                import logging
-                logging.getLogger("payp.memory.mempalace").exception("MemPalace read failed")
+                logger.exception("MemPalace read failed")
                 return None
 
             docs = results.get("documents", [])
@@ -189,8 +191,7 @@ class MemPalaceBackend:
                         ],
                     )
                 else:
-                    import logging
-                    logging.getLogger("payp.memory.mempalace").exception("MemPalace save failed")
+                    logger.exception("MemPalace save failed")
                     raise
 
             # Optionally record in knowledge graph
@@ -234,8 +235,7 @@ class MemPalaceBackend:
             try:
                 results = self._col.query(**kwargs)
             except Exception:
-                import logging
-                logging.getLogger("payp.memory.mempalace").exception("MemPalace search failed")
+                logger.exception("MemPalace search failed")
                 return []
 
             docs = results["documents"][0]
@@ -285,8 +285,7 @@ class MemPalaceBackend:
             try:
                 results = self._col.get(**kwargs)
             except Exception:
-                import logging
-                logging.getLogger("payp.memory.mempalace").exception("MemPalace list_all failed")
+                logger.exception("MemPalace list_all failed")
                 return []
 
             # Deduplicate by (wing, room)
@@ -323,8 +322,7 @@ class MemPalaceBackend:
                     self._col.delete(ids=ids)
                     return True
             except Exception:
-                import logging
-                logging.getLogger("payp.memory.mempalace").exception("MemPalace delete failed")
+                logger.exception("MemPalace delete failed")
             return False
 
         return await asyncio.to_thread(_delete)
@@ -348,8 +346,7 @@ class MemPalaceBackend:
                     await self.save(conn_name, table_name, content, "business_logic")
                     migrated += 1
             except Exception as exc:
-                import logging
-                logging.getLogger("payp.memory.mempalace").exception("MemPalace migrate_from entry failed")
+                logger.exception("MemPalace migrate_from entry failed")
                 errors.append(f"{conn_name}/{table_name}: {exc}")
 
         return {"migrated": migrated, "errors": errors}
@@ -368,8 +365,7 @@ class MemPalaceBackend:
             else:
                 drawer_count = self._col.count()
         except Exception:
-            import logging
-            logging.getLogger("payp.memory.mempalace").exception("MemPalace status count failed")
+            logger.exception("MemPalace status count failed")
             drawer_count = 0
 
         kg_stats: dict[str, Any] = {}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +13,8 @@ from payp.ui.streaming import display_tool_call, display_tool_result
 
 if TYPE_CHECKING:
     from ._facade import ChatSession
+
+logger = logging.getLogger(__name__)
 
 
 def log_sql_execution(
@@ -62,9 +65,7 @@ def log_sql_execution(
             consensus_verdict=consensus_verdict,
         )
     except Exception:
-        import logging
-        logging.getLogger("payp.core.chat.sql_pipeline").exception("tx_log.log failed")
-        # Don't let logging errors break the chat flow
+        logger.exception("tx_log.log failed")
 
 
 async def execute_sql_with_mode(

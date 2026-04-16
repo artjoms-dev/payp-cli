@@ -15,11 +15,14 @@ cannot bypass the user confirmation step outside of YOLO mode.
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 VALID_TARGETS = (
     "sessions",
@@ -154,8 +157,7 @@ class CleanupTool(BaseTool):
             else:
                 return ToolResult(success=False, error=f"Unsupported target: {target}")
         except Exception as e:
-            import logging
-            logging.getLogger("payp.tools.cleanup").exception("cleanup_tool failed")
+            logger.exception("cleanup_tool failed")
             return ToolResult(success=False, error=f"{target} cleanup failed: {e}")
 
         n = len(result.get("deleted", []))

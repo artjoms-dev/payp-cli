@@ -4,7 +4,7 @@ Houses _ensure_chat_session (rebuilds the ChatSession when connection or mode
 changes) and the session-log helpers (_log_db_connected_to_session,
 _log_memory_backend_to_session, _short).
 
-_interactive_loop lives here too — it is populated in dispatch.py's init
+_interactive_loop lives here too - it is populated in dispatch.py's init
 so that the completer and handler are available first. See dispatch.py.
 """
 
@@ -18,17 +18,11 @@ from payp.config import load_models_config
 def _stop_banner_animator() -> None:
     """Stop the welcome-banner shimmer thread if it is still running.
 
-    Pops the animator out of state so subsequent calls are no-ops. Failure
-    to stop (e.g. the thread already exited) is intentionally swallowed —
-    the animator is best-effort and must never block the REPL.
+    Pops the animator out of state so subsequent calls are no-ops.
     """
     anim = _state.pop("banner_anim", None)
-    if anim is None:
-        return
-    try:
+    if anim is not None:
         anim.stop()
-    except Exception:
-        pass
 
 
 def _ensure_chat_session() -> None:
@@ -159,9 +153,6 @@ def _interactive_loop() -> None:
             console.print("\n[dim]Goodbye![/dim]")
             break
 
-        # Freeze the welcome banner shimmer on the first submit so the
-        # animator thread doesn't keep overwriting rows that have now
-        # scrolled into earlier history.
         _stop_banner_animator()
 
         if not user_input:
