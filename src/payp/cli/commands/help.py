@@ -44,6 +44,7 @@ def _cmd_help() -> None:
             ("/more", "next 20 rows of last SELECT"),
             ("/cost", "token usage and costs"),
             ("/export [path]", "export session to markdown"),
+            ("/clear", "clear the screen (also cls / cs / /cls)"),
             ("/help", "this help"),
             ("/quit", "exit payp"),
         ]),
@@ -75,3 +76,11 @@ def _cmd_quit() -> None:
     """Exit payp."""
     console.print("[dim]Goodbye![/dim]")
     raise typer.Exit()
+
+
+def _cmd_clear() -> None:
+    """Clear the terminal screen without leaving the REPL."""
+    # The interactive loop already catches bare cls / clear / cs / their
+    # slashed twins before dispatch — this handler keeps the command
+    # discoverable via autocomplete and /help.
+    console.clear()

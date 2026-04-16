@@ -76,6 +76,8 @@ def _build_registry() -> dict[str, SlashCommand]:
         "/cost": SlashCommand(_wrap(context._cmd_cost), "token usage and costs", False),
         "/export": SlashCommand(export._cmd_export, "export session to markdown", True),
         "/skills": SlashCommand(_wrap(skills._cmd_skills), "browse available workflows", False),
+        "/clear": SlashCommand(_wrap(help_cmd._cmd_clear), "clear the screen (also cls / cs)", False),
+        "/cls": SlashCommand(_wrap(help_cmd._cmd_clear), "clear the screen", False),
         "/help": SlashCommand(_wrap(help_cmd._cmd_help), "show available commands", False),
         "/quit": SlashCommand(_wrap(help_cmd._cmd_quit), "exit payp", False),
         "/exit": SlashCommand(_wrap(help_cmd._cmd_quit), "exit payp", False),

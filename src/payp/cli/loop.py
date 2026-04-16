@@ -145,6 +145,10 @@ def _interactive_loop() -> None:
         if not user_input:
             continue
 
+        if user_input.lower() in ("cls", "clear", "cs", "/cls", "/clear", "/cs"):
+            console.clear()
+            continue
+
         # Route slash commands
         if user_input.startswith("/"):
             _handle_command(user_input)
