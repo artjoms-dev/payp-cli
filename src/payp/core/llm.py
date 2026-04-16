@@ -93,9 +93,13 @@ class LLMClient:
 
         provider = providers.get(provider_name) if provider_name else None
 
-        if provider_name == "azure" and provider:
-            # litellm expects azure/<deployment_name>
-            model = f"azure/{actual_model}"
+        if provider_name.startswith("azure") and provider:
+            # Detect Anthropic-on-Azure (Azure AI Foundry) vs Azure OpenAI.
+            # litellm uses azure_ai/ for non-OpenAI models (Claude, Mistral, etc.)
+            # and azure/ for native Azure OpenAI deployments.
+            is_azure_ai = provider.base_url and "/anthropic" in provider.base_url
+            prefix = "azure_ai" if is_azure_ai else "azure"
+            model = f"{prefix}/{actual_model}"
             extra_kwargs["api_key"] = provider.api_key
             if provider.base_url:
                 extra_kwargs["api_base"] = provider.base_url

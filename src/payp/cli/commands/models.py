@@ -261,6 +261,14 @@ def _setup_new_provider(*, animate_intro: bool = False) -> None:
             api_key=api_key, base_url=url,
             default_model=model_name, api_version=api_version,
         )
+        # Allow custom name when "azure" already exists (e.g. azure-claude)
+        providers = load_models_config()
+        if name in providers:
+            custom = prompt_required(
+                f"Name already taken. Enter a unique name [{name}]: ", default=name,
+            )
+            if custom != name:
+                name = custom
     elif name == "anthropic":
         api_key = prompt_required("Enter Anthropic API key: ", is_password=True)
         if prompt_confirm("Use custom base URL (e.g. for Azure-hosted Claude)?", default=False):
