@@ -15,6 +15,22 @@ from payp.cli.state import _state, console, get_config
 from payp.config import load_models_config
 
 
+def _stop_banner_animator() -> None:
+    """Stop the welcome-banner shimmer thread if it is still running.
+
+    Pops the animator out of state so subsequent calls are no-ops. Failure
+    to stop (e.g. the thread already exited) is intentionally swallowed —
+    the animator is best-effort and must never block the REPL.
+    """
+    anim = _state.pop("banner_anim", None)
+    if anim is None:
+        return
+    try:
+        anim.stop()
+    except Exception:
+        pass
+
+
 def _ensure_chat_session() -> None:
     """Initialize or reinitialize the chat session."""
     from payp.core.chat import ChatSession
@@ -139,8 +155,14 @@ def _interactive_loop() -> None:
         try:
             user_input = session.prompt("payp> ").strip()
         except (EOFError, KeyboardInterrupt):
+            _stop_banner_animator()
             console.print("\n[dim]Goodbye![/dim]")
             break
+
+        # Freeze the welcome banner shimmer on the first submit so the
+        # animator thread doesn't keep overwriting rows that have now
+        # scrolled into earlier history.
+        _stop_banner_animator()
 
         if not user_input:
             continue
@@ -168,4 +190,16 @@ def _interactive_loop() -> None:
             except KeyboardInterrupt:
                 console.print("\n[dim]Cancelled.[/dim]")
             except Exception as e:
-                console.print(f"[red]Error: {e}[/red]")
+                from payp.ui.errors import show_error
+                short = str(e).strip() or type(e).__name__
+                show_error(
+                    "Couldn't process that input",
+                    short,
+                    exc=e,
+                    hint=(
+                        "Try /help for available commands, "
+                        "/models to configure the AI provider, "
+                        "or /db to check your database connection."
+                    ),
+                    logger_name="payp.chat",
+                )
