@@ -98,8 +98,51 @@ def _cmd_more() -> None:
     chat.last_select["truncated"] = result.truncated
 
 
-def _cmd_context() -> None:
-    """Show current context window usage."""
+def _set_schema_budget(value_str: str) -> None:
+    """Set the schema context token budget."""
+    from payp.config import load_config, save_config
+    from payp.ui.theme import Color
+
+    if not value_str:
+        config = load_config()
+        console.print(f"  Schema budget: [{Color.BRAND_ALT}]{config.schema_budget:,} tokens[/{Color.BRAND_ALT}]")
+        console.print("  [dim]Usage: /context budget 10k | /context budget 50000[/dim]")
+        return
+
+    # Parse "10k", "30K", "50000" etc
+    raw = value_str.strip().lower().rstrip("tokens").strip()
+    if raw.endswith("k"):
+        try:
+            tokens = int(float(raw[:-1]) * 1000)
+        except ValueError:
+            console.print(f"[red]Invalid value: '{value_str}'. Use e.g. 10k or 50000.[/red]")
+            return
+    else:
+        try:
+            tokens = int(raw)
+        except ValueError:
+            console.print(f"[red]Invalid value: '{value_str}'. Use e.g. 10k or 50000.[/red]")
+            return
+
+    if tokens < 1000:
+        console.print("[red]Minimum budget is 1000 tokens (T0 needs room).[/red]")
+        return
+
+    config = load_config()
+    config.schema_budget = tokens
+    save_config(config)
+    console.print(f"  Schema budget set to [{Color.BRAND_ALT}]{tokens:,} tokens[/{Color.BRAND_ALT}]")
+    console.print("  [dim]Takes effect on next message.[/dim]")
+
+
+def _cmd_context(args: str) -> None:
+    """Show current context window usage or set schema budget."""
+    parts = args.strip().split() if args.strip() else []
+
+    if parts and parts[0].lower() == "budget":
+        _set_schema_budget(parts[1] if len(parts) > 1 else "")
+        return
+
     chat = _state.get("chat_session")
     if not chat:
         console.print("[dim]No active chat session.[/dim]")
@@ -137,6 +180,9 @@ def _cmd_context() -> None:
     if stats.should_compact:
         console.print("  [yellow]⚠ Auto-compaction will trigger on next message[/yellow]")
     console.print("  [dim]Run /compact to compress older messages now[/dim]")
+    from payp.config import load_config
+    budget = load_config().schema_budget
+    console.print(f"  [dim]Schema budget: {budget:,} tokens  •  /context budget <N> to change[/dim]")
     console.print()
 
 

@@ -71,7 +71,7 @@ def _build_registry() -> dict[str, SlashCommand]:
         "/history": SlashCommand(history._cmd_history, "SQL audit log", True),
         "/resume": SlashCommand(resume._cmd_resume, "continue previous session", True),
         "/compact": SlashCommand(_wrap(context._cmd_compact), "compress older messages", False),
-        "/context": SlashCommand(_wrap(context._cmd_context), "show context window usage", False),
+        "/context": SlashCommand(context._cmd_context, "show context window usage", True),
         "/more": SlashCommand(_wrap(context._cmd_more), "next 20 rows of last SELECT", False),
         "/cost": SlashCommand(_wrap(context._cmd_cost), "token usage and costs", False),
         "/export": SlashCommand(export._cmd_export, "export session to markdown", True),

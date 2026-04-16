@@ -433,6 +433,7 @@ def build_system_prompt(
     knowledge_dir: Path | None = None,
     active_connections: list[dict] | None = None,
     skills: list[Any] | None = None,
+    schema_budget: int = 10000,
 ) -> str:
     """Assemble the full system prompt from all sections."""
     sections = []
@@ -470,7 +471,7 @@ Do not guess or pretend you can access data.""")
     if active_connections and len(active_connections) > 1:
         sections.append(_build_active_connections_section(active_connections))
 
-    # 5. Schema context
+    # 5. Schema context — budget-aware injection
     if t0 or t1:
         schema_parts = ["## Schema Context"]
         schema_parts.append(
@@ -479,15 +480,48 @@ Do not guess or pretend you can access data.""")
             "unless you need a table not shown here. When a skill says 'discover tables', "
             "check this section first."
         )
+        # T0 is always included (tiny)
         if t0:
             from payp.db.introspection import format_t0_for_context
             schema_parts.append(format_t0_for_context(t0))
-        if t1:
+
+        # Budget-aware: estimate tokens as chars/4, inject T1 then FK if they fit
+        budget_remaining = schema_budget
+        # Subtract what we already have
+        current_text = "\n".join(schema_parts)
+        budget_remaining -= len(current_text) // 4
+
+        t1_text = ""
+        if t1 and budget_remaining > 0:
             from payp.db.introspection import format_t1_for_context
-            schema_parts.append(format_t1_for_context(t1))
-        if fk_graph and fk_graph.edges:
+            t1_text = format_t1_for_context(t1)
+            t1_cost = len(t1_text) // 4
+            if t1_cost <= budget_remaining:
+                schema_parts.append(t1_text)
+                budget_remaining -= t1_cost
+            else:
+                # Truncate T1: include schemas that fit
+                schema_parts.append(
+                    f"(T1 table list truncated — {t1_cost:,} tokens exceeds "
+                    f"remaining budget of {budget_remaining:,}. "
+                    f"Use schema_search to find tables.)"
+                )
+                budget_remaining = 0
+
+        fk_text = ""
+        if fk_graph and fk_graph.edges and budget_remaining > 0:
             from payp.db.introspection import format_schema_graph_for_context
-            schema_parts.append(format_schema_graph_for_context(fk_graph))
+            fk_text = format_schema_graph_for_context(fk_graph)
+            fk_cost = len(fk_text) // 4
+            if fk_cost <= budget_remaining:
+                schema_parts.append(fk_text)
+                budget_remaining -= fk_cost
+            else:
+                schema_parts.append(
+                    f"(FK graph truncated — {len(fk_graph.edges):,} relationships. "
+                    f"Use schema_lookup to see FKs for specific tables.)"
+                )
+
         if t2_context:
             schema_parts.append("### Relevant Table Details (already loaded — DO NOT call schema_lookup or read_knowledge for these)")
             schema_parts.append(t2_context)

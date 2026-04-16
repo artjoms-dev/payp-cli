@@ -209,6 +209,9 @@ class ChatSession:
             except Exception:
                 pass
 
+        from payp.config import load_config
+        schema_budget = load_config().schema_budget
+
         from payp.storage.knowledge import get_knowledge_dir
         active_connections = (
             self.multi_conn.list_info() if self.multi_conn else None
@@ -230,6 +233,7 @@ class ChatSession:
             knowledge_dir=get_knowledge_dir(),
             active_connections=active_connections,
             skills=skills_for_prompt or None,
+            schema_budget=schema_budget,
         )
 
     def get_context_stats(self, system_prompt: str = "") -> Any:

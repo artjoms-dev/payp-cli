@@ -74,6 +74,7 @@ class AppConfig(BaseModel):
     default_mode: SecurityMode = SecurityMode.MANUAL
     default_model: str = "openrouter/google/gemma-4-26b-a4b-it:free"
     theme: str = "default"
+    schema_budget: int = 10000
     roles: ModelRoles = Field(default_factory=ModelRoles)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
 
