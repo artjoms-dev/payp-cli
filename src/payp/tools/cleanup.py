@@ -187,8 +187,8 @@ class CleanupTool(BaseTool):
         protected: set[str] = set()
         if context:
             chat = context.get("chat_session") or context.get("chat")
-            if chat and getattr(chat, "session_file", None):
-                protected.add(str(chat.session_file))
+            if chat and hasattr(chat, "session") and getattr(chat.session, "path", None):
+                protected.add(str(chat.session.path))
         if keep_last is not None and keep_last > 0:
             for s in sessions[:keep_last]:
                 protected.add(s["file"])
@@ -232,8 +232,8 @@ class CleanupTool(BaseTool):
         # Protect the active session if chat is running
         current_file = None
         chat = context.get("chat_session") or context.get("chat")
-        if chat and getattr(chat, "session_file", None):
-            current_file = str(chat.session_file)
+        if chat and hasattr(chat, "session") and getattr(chat.session, "path", None):
+            current_file = str(chat.session.path)
 
         all_flag = args.get("all", False)
         older_than = args.get("older_than_days")

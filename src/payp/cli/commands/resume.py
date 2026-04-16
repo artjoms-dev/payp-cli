@@ -70,8 +70,8 @@ def _cmd_resume(args: str = "") -> None:
 
         current_file: str | None = None
         chat = _state.get("chat_session")
-        if chat and getattr(chat, "session_file", None):
-            current_file = str(chat.session_file)
+        if chat and hasattr(chat, "session") and getattr(chat.session, "path", None):
+            current_file = str(chat.session.path)
 
         result = clean_sessions(
             empty=empty_only,

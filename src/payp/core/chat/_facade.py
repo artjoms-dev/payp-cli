@@ -92,7 +92,7 @@ class ChatSession:
             "t1": self.t1,
             "mode": self.mode,
             "skills": self.skills,
-            "chat_session": self,  # so tools can reach self.session_file, etc.
+            "chat_session": self,  # so tools can reach self.session.path, etc.
         }
 
     def _display_tool_data(self, tool_name: str, result: Any, sql: str = "") -> None:
