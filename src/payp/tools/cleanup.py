@@ -47,7 +47,19 @@ class CleanupTool(BaseTool):
         "connection (cache), tag (queries). "
         "This tool ALWAYS shows the user what will be deleted and waits for "
         "confirmation before executing (except in YOLO mode). Use it when the "
-        "user asks to clean up, purge, remove old, or free space."
+        "user asks to clean up, purge, remove old, or free space.\n\n"
+        "Examples:\n"
+        '  cleanup(target="sessions", empty=true, reason="...")            -- default: stubs only\n'
+        '  cleanup(target="sessions", all=true, reason="...")              -- wipe EVERYTHING (active session protected)\n'
+        '  cleanup(target="sessions", older_than_days=7, keep_last=10, reason="...")\n'
+        '  cleanup(target="cache", connection="test-pg", reason="...")\n'
+        '  cleanup(target="snapshots", older_than_days=14, keep_last=5, reason="...")\n'
+        '  cleanup(target="legacy_knowledge", reason="user asked to remove legacy knowledge dir")\n\n'
+        "Set all=true when the user says 'all', 'everything', 'wipe', 'clear', or 'force cleanup'. "
+        "ALWAYS set the reason field so the user sees why in the approval panel. "
+        "The tool will refuse to delete legacy_knowledge if migration hasn't happened yet -- "
+        "pass force=true only if the user explicitly wants to delete unmigrated data. "
+        "Never try to clean up via execute_shell (rm -rf) -- always use this tool."
     )
     is_read_only = False
     is_destructive = True

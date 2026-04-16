@@ -1,6 +1,6 @@
 """Dynamic system prompt builder for payp.
 
-Assembles 8 sections based on current state:
+Assembles 7 sections based on current state:
 1. Identity & Role (static)
 2. Capabilities & Constraints (static)
 3. Security Mode (dynamic — based on current /mode)
@@ -119,23 +119,11 @@ and KNOWN TOTALS/COUNTS — prefer citing a known count from knowledge over re-r
 - Use search_knowledge to find knowledge across all tables when looking for a concept or pattern \
 (e.g., 'timezone handling', 'soft delete pattern', 'status enum values').
 - When the user asks to CLEAN UP, PURGE, REMOVE OLD, or FREE SPACE (sessions, queries, cache, \
-snapshots, exports), use the `cleanup` tool with an explicit `target` and filter arguments. \
-Examples:
-    cleanup(target="sessions", empty=true, reason="...")            — default: stubs only
-    cleanup(target="sessions", all=true, reason="...")              — wipe EVERYTHING (active session protected)
-    cleanup(target="sessions", older_than_days=7, keep_last=10, reason="...")
-    cleanup(target="cache", connection="test-pg", reason="...")
-    cleanup(target="snapshots", older_than_days=14, keep_last=5, reason="...")
-    cleanup(target="legacy_knowledge", reason="user asked to remove legacy knowledge dir")
-  When the user says "legacy knowledge", "old knowledge dir", or references the legacy \
-  banner on startup, use target="legacy_knowledge". The tool will refuse if migration \
-  hasn't happened yet — pass `force=true` only if the user explicitly wants to delete unmigrated data.
-  Set `all=true` when the user says "all", "everything", "wipe", "clear", or "force cleanup". \
-  ALWAYS set the `reason` field so the user sees why in the approval panel. \
-  Cleanup is destructive but is automatically gated by a user approval step — you cannot delete \
-  silently. Never try to clean up via execute_shell (rm -rf) — always use the cleanup tool.
-- ALWAYS use the schema_lookup tool BEFORE writing any INSERT, UPDATE, DELETE, or DDL query. \
-Never guess column names — check first.
+snapshots, exports), use the `cleanup` tool with an explicit `target` and `reason`. \
+Set `all=true` when the user says "all", "everything", "wipe", or "force cleanup". \
+When the user says "legacy knowledge", use target="legacy_knowledge".
+- BEFORE writing INSERT, UPDATE, DELETE, or DDL: check column names in the Schema Context above first. \
+Only call schema_lookup if the table is NOT already shown in the Schema Context.
 - When you discover NEW facts about a table during work (enum values like status 1=pending, \
 NULL meanings, filter rules, FK business logic, data quality quirks), call propose_knowledge to \
 suggest adding it to the knowledge base. The USER will approve, edit, or reject before saving. \
@@ -147,14 +135,10 @@ DIFFERENT DATABASES HAVE DIFFERENT DATA — prod-pg customers may have ids 1-30 
 oracle-dwh customers have ids 41-60. Never assume IDs exist — verify.
 - If you get ORA-02291 / FK violation / constraint error on INSERT: immediately query the \
 referenced table to find valid IDs, then retry with correct values. DO NOT stop or ask user.
-- Before any DELETE, ALWAYS run the check_cascade tool first. \
-If CASCADE relationships exist, you MUST warn the user clearly: \
-"WARNING: This will CASCADE-delete data from [table1] (X rows), [table2] (Y rows), etc." \
-List EVERY affected table with row counts. Ask for explicit confirmation.
-- Before any DELETE or UPDATE, ALWAYS run snapshot_before_delete for EACH table that will \
-be affected (including cascade targets). For example, if deleting from customers will cascade \
-to orders, order_items, and payments — snapshot ALL FOUR tables before executing. \
-This ensures complete restoration is possible.
+- Before any DELETE or UPDATE:
+  1. Run check_cascade to identify cascading FKs. If CASCADE exists, warn the user with affected tables and row counts.
+  2. Run snapshot_before_delete for EACH affected table (including cascade targets).
+  3. Then execute_sql (approval is automatic in MANUAL/SECURE modes).
 - Never execute destructive operations without showing them first (unless YOLO mode)
 - Never expose credentials or connection secrets in output
 - Never modify databases the user hasn't explicitly connected to
@@ -204,28 +188,6 @@ YOUR JOB: Call execute_sql. Do NOT ask for permission in text. \
 SELECTs execute without review.\
 """,
 }
-
-# --- Section 8: Snapshots ---
-
-SNAPSHOTS = """\
-## Snapshots
-Snapshots are JSONL backup files saved in ./payp/snapshots/ before DELETE/UPDATE operations.
-They are LOCAL FILES — not in the database. Managed via tools, not SQL.
-
-Available snapshot tools:
-- snapshot_before_delete: create a snapshot BEFORE destructive DML
-- list_snapshots: list all snapshots with metadata (filter by table/operation)
-- delete_snapshot: delete specific snapshot file(s) by path
-- restore_snapshot: restore data from a snapshot file
-
-Snapshots persist between sessions and are never auto-deleted.
-
-When user asks about snapshots (list, clean up, delete, restore):
-- Use list_snapshots first to see what exists
-- Use delete_snapshot to remove specific files (pass file paths from list_snapshots)
-- Use restore_snapshot to bring data back
-- NEVER use execute_sql for snapshot management — snapshots are files, not DB rows\
-"""
 
 # --- Section 9: Error Recovery ---
 
@@ -526,10 +488,8 @@ Do not guess or pretend you can access data.""")
             schema_parts.append("### Relevant Table Details (already loaded — DO NOT call schema_lookup or read_knowledge for these)")
             schema_parts.append(t2_context)
             schema_parts.append(
-                "\n**The DDL and Business Knowledge above are AUTHORITATIVE and RELIABLE.** "
-                "Use them directly. Only call schema_lookup if you need a DIFFERENT table "
-                "not shown above, and only call read_knowledge for tables whose business "
-                "knowledge is NOT already inlined above."
+                "\n**The DDL and knowledge above are authoritative.** "
+                "Only call schema_lookup or read_knowledge for tables NOT shown above."
             )
         sections.append("\n".join(schema_parts))
 
@@ -579,10 +539,7 @@ Do not guess or pretend you can access data.""")
         )
         sections.append("\n".join(skill_lines))
 
-    # 8. Snapshots
-    sections.append(SNAPSHOTS)
-
-    # 9. Error recovery
+    # 8. Error recovery
     sections.append(ERROR_RECOVERY)
 
     return "\n\n".join(sections)
