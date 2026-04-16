@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from payp.db.connection import ConnectionManager
-from payp.models import DbType, SchemaCatalog, SchemaIndex
+from payp.models import DbType, SchemaCatalog, SchemaGraph, SchemaIndex
 
 # System schemas we never introspect
 PG_SYSTEM_SCHEMAS = ("pg_catalog", "information_schema", "pg_toast")
@@ -73,6 +73,18 @@ async def discover_t0(conn: ConnectionManager) -> SchemaIndex:
              WHERE owner NOT IN ({excl})
              GROUP BY owner
         """)  # nosec B608
+    elif conn.db_type == DbType.MONGODB:
+        coll_rows = await conn.execute_raw('{"op": "listCollections"}')
+        version_rows = await conn.execute_raw('{"op": "serverInfo"}')
+        version = version_rows[0].get("version", "unknown") if version_rows else "unknown"
+        db_name = conn.profile.database
+        coll_count = len(coll_rows)
+        return SchemaIndex(
+            db_version=f"MongoDB {version}",
+            schemas={db_name: coll_count},
+            view_count=0,
+            total_tables=coll_count,
+        )
     else:
         raise ValueError(f"Unsupported db_type: {conn.db_type}")
 
@@ -130,6 +142,11 @@ async def discover_t1(conn: ConnectionManager) -> SchemaCatalog:
              WHERE owner NOT IN ({excl})
              ORDER BY owner, table_name
         """)  # nosec B608
+    elif conn.db_type == DbType.MONGODB:
+        coll_rows = await conn.execute_raw('{"op": "listCollections"}')
+        db_name = conn.profile.database
+        tables_result: dict[str, list[str]] = {db_name: [row["name"] for row in coll_rows]}
+        return SchemaCatalog(tables=tables_result)
     else:
         raise ValueError(f"Unsupported db_type: {conn.db_type}")
 
@@ -157,6 +174,8 @@ async def discover_t2(conn: ConnectionManager, schema: str, table: str) -> str:
         return await _t2_mysql(conn, schema, table)
     if conn.db_type == DbType.ORACLE:
         return await _t2_oracle(conn, schema.upper(), table.upper())
+    if conn.db_type == DbType.MONGODB:
+        return await _t2_mongo(conn, table)
     raise ValueError(f"Unsupported db_type: {conn.db_type}")
 
 
@@ -304,6 +323,63 @@ async def _t2_oracle(conn: ConnectionManager, schema: str, table: str) -> str:
     return _render_ddl(schema, table, cols, pk_columns, fk_map)
 
 
+async def _t2_mongo(conn: ConnectionManager, collection: str) -> str:
+    """T2 for MongoDB: sample 50 docs to infer schema + list indexes."""
+    import json as _json
+
+    # Sample documents for schema inference
+    sample_rows = await conn.execute_raw(
+        _json.dumps({"op": "sample", "collection": collection, "size": 50})
+    )
+    total_docs: Any = "?"
+    try:
+        stats_rows = await conn.execute_raw(
+            _json.dumps({"op": "collStats", "collection": collection})
+        )
+        if stats_rows:
+            total_docs = stats_rows[0].get("count", "?")
+    except Exception:
+        count_rows = await conn.execute_raw(
+            _json.dumps({"op": "countDocuments", "collection": collection, "filter": {}})
+        )
+        total_docs = count_rows[0].get("count", "?") if count_rows else "?"
+
+    # Infer field types from sampled documents
+    field_types: dict[str, set[str]] = {}
+    for doc in sample_rows:
+        for k, v in doc.items():
+            if k == "_id":
+                continue
+            type_name = type(v).__name__
+            field_types.setdefault(k, set()).add(type_name)
+
+    # Get indexes
+    idx_rows = await conn.execute_raw(
+        _json.dumps({"op": "indexes", "collection": collection})
+    )
+
+    lines = [
+        f"Collection: {collection}  ({total_docs:,} documents)" if isinstance(total_docs, int)
+        else f"Collection: {collection}  ({total_docs} documents)",
+        "",
+        f"Inferred fields (from {len(sample_rows)} sampled docs):",
+    ]
+    for field, types in sorted(field_types.items()):
+        type_str = " | ".join(sorted(types))
+        lines.append(f"  {field:<24} {type_str}")
+
+    if idx_rows:
+        lines.append("")
+        lines.append("Indexes:")
+        for idx in idx_rows:
+            name = idx.get("name", "?")
+            key = idx.get("key", {})
+            unique = "  [unique]" if idx.get("unique") else ""
+            lines.append(f"  {name:<30} {key}{unique}")
+
+    return "\n".join(lines)
+
+
 def _render_ddl(
     schema: str,
     table: str,
@@ -349,6 +425,8 @@ async def discover_t3(conn: ConnectionManager, schema: str, table: str) -> dict[
         return await _t3_mysql(conn, schema, table)
     if conn.db_type == DbType.ORACLE:
         return await _t3_oracle(conn, schema.upper(), table.upper())
+    if conn.db_type == DbType.MONGODB:
+        return await _t3_mongo(conn, table)
     raise ValueError(f"Unsupported db_type: {conn.db_type}")
 
 
@@ -557,6 +635,26 @@ async def _t3_oracle(conn: ConnectionManager, schema: str, table: str) -> dict[s
     return result
 
 
+async def _t3_mongo(conn: ConnectionManager, collection: str) -> dict[str, Any]:
+    """T3 for MongoDB: collection stats and index details."""
+    import json as _json
+
+    stats_rows = await conn.execute_raw(
+        _json.dumps({"op": "collStats", "collection": collection})
+    )
+    idx_rows = await conn.execute_raw(
+        _json.dumps({"op": "indexes", "collection": collection})
+    )
+    stats = stats_rows[0] if stats_rows else {}
+    return {
+        "count": stats.get("count", 0),
+        "size": stats.get("size", 0),
+        "avgObjSize": stats.get("avgObjSize", 0),
+        "storageSize": stats.get("storageSize", 0),
+        "indexes": idx_rows,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Column type formatting + metadata + context formatters
 # ---------------------------------------------------------------------------
@@ -599,6 +697,16 @@ async def get_db_metadata(conn: ConnectionManager) -> dict[str, Any]:
             meta["username"] = rows[0]["username"]
         meta["db_size"] = "unknown"
         meta["uptime"] = "unknown"
+        meta["is_superuser"] = False
+    elif conn.db_type == DbType.MONGODB:
+        stats_rows = await conn.execute_raw('{"op": "dbStats"}')
+        stats = stats_rows[0] if stats_rows else {}
+        version_rows = await conn.execute_raw('{"op": "serverInfo"}')
+        version = version_rows[0].get("version", "unknown") if version_rows else "unknown"
+        meta["db_version"] = f"MongoDB {version}"
+        meta["db_size"] = f"{stats.get('dataSize', 0) // 1024} KB"
+        meta["username"] = conn.profile.username or ""
+        meta["uptime"] = "see server logs"
         meta["is_superuser"] = False
 
     return meta
@@ -668,4 +776,123 @@ def format_t1_for_context(catalog: SchemaCatalog) -> str:
         lines.append(f"Schema: {schema} ({len(tables)} tables)")
         lines.append(f"  {', '.join(tables)}")
         lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# FK graph — whole-DB foreign key adjacency
+# ---------------------------------------------------------------------------
+
+def hash_table_names(catalog: SchemaCatalog) -> str:
+    """SHA-1 of sorted 'schema.table' names — used as drift detector for the FK graph cache."""
+    import hashlib
+    names = sorted(
+        f"{schema}.{table}"
+        for schema, tables in catalog.tables.items()
+        for table in tables
+    )
+    return hashlib.sha1("|".join(names).encode()).hexdigest()
+
+
+async def discover_fk_graph(conn: ConnectionManager) -> SchemaGraph:
+    """Whole-DB FK adjacency graph — one query per database, all dialects."""
+    if conn.db_type == DbType.POSTGRESQL:
+        return await _fk_graph_postgres(conn)
+    if conn.db_type == DbType.MYSQL:
+        return await _fk_graph_mysql(conn)
+    if conn.db_type == DbType.ORACLE:
+        return await _fk_graph_oracle(conn)
+    if conn.db_type == DbType.MONGODB:
+        # MongoDB has no declared FK constraints
+        return SchemaGraph(edges=[], table_names_hash="")
+    raise ValueError(f"Unsupported db_type: {conn.db_type}")
+
+
+async def _fk_graph_postgres(conn: ConnectionManager) -> SchemaGraph:
+    rows = await conn.execute_raw("""
+        SELECT
+            kcu.table_schema || '.' || kcu.table_name  AS from_table,
+            kcu.column_name                             AS from_col,
+            ccu.table_schema || '.' || ccu.table_name  AS to_table,
+            ccu.column_name                             AS to_col
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema    = kcu.table_schema
+        JOIN information_schema.constraint_column_usage ccu
+          ON tc.constraint_name = ccu.constraint_name
+         AND tc.table_schema    = ccu.table_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND tc.table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+        ORDER BY from_table, from_col
+    """)
+    edges = [
+        (r["from_table"], r["from_col"], r["to_table"], r["to_col"])
+        for r in rows
+    ]
+    return SchemaGraph(edges=edges)
+
+
+async def _fk_graph_mysql(conn: ConnectionManager) -> SchemaGraph:
+    rows = await conn.execute_raw("""
+        SELECT
+            CONCAT(table_schema, '.', table_name)             AS from_table,
+            column_name                                        AS from_col,
+            CONCAT(referenced_table_schema, '.',
+                   referenced_table_name)                      AS to_table,
+            referenced_column_name                             AS to_col
+        FROM information_schema.key_column_usage
+        WHERE referenced_table_name IS NOT NULL
+          AND table_schema NOT IN
+              ('information_schema', 'mysql', 'performance_schema', 'sys')
+        ORDER BY from_table, from_col
+    """)
+    edges = [
+        (r["from_table"], r["from_col"], r["to_table"], r["to_col"])
+        for r in rows
+    ]
+    return SchemaGraph(edges=edges)
+
+
+async def _fk_graph_oracle(conn: ConnectionManager) -> SchemaGraph:
+    excl = _oracle_excl_list()
+    # excl is built from a hardcoded ORACLE_SYSTEM_SCHEMAS tuple
+    rows = await conn.execute_raw(f"""
+        SELECT
+            ac.owner  || '.' || ac.table_name   AS from_table,
+            acc.column_name                       AS from_col,
+            rc.owner  || '.' || rc.table_name    AS to_table,
+            rcc.column_name                       AS to_col
+          FROM all_constraints ac
+          JOIN all_cons_columns acc
+            ON ac.owner = acc.owner
+           AND ac.constraint_name = acc.constraint_name
+          JOIN all_constraints rc
+            ON ac.r_owner = rc.owner
+           AND ac.r_constraint_name = rc.constraint_name
+          JOIN all_cons_columns rcc
+            ON rc.owner = rcc.owner
+           AND rc.constraint_name = rcc.constraint_name
+           AND acc.position = rcc.position
+         WHERE ac.constraint_type = 'R'
+           AND ac.owner NOT IN ({excl})
+         ORDER BY from_table, from_col
+    """)  # nosec B608
+    edges = [
+        (r["from_table"], r["from_col"], r["to_table"], r["to_col"])
+        for r in rows
+    ]
+    return SchemaGraph(edges=edges)
+
+
+def format_schema_graph_for_context(graph: SchemaGraph) -> str:
+    """Format FK graph as compact text for LLM system prompt.
+
+    Output: one line per FK, ~35 chars each.  200 FKs ≈ 7 KB — cheap.
+    """
+    if not graph.edges:
+        return ""
+    lines = [f"### Foreign Key Graph ({len(graph.edges)} relationships)"]
+    for from_table, from_col, to_table, to_col in sorted(graph.edges):
+        lines.append(f"{from_table}.{from_col} -> {to_table}.{to_col}")
     return "\n".join(lines)

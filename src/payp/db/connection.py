@@ -205,6 +205,9 @@ def _build_driver(
     if profile.db_type == DbType.ORACLE:
         from payp.db.oracle import OracleDriver
         return OracleDriver(profile, credential)
+    if profile.db_type == DbType.MONGODB:
+        from payp.db.mongo import MongoDriver
+        return MongoDriver(profile, credential)
     raise ConnectionError(f"Unsupported db_type: {profile.db_type}")
 
 

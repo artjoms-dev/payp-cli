@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from payp.models import SchemaCatalog, SchemaIndex, SecurityMode
+from payp.models import SchemaCatalog, SchemaGraph, SchemaIndex, SecurityMode
 
 # Forward reference to avoid circular import at module load
 if False:  # TYPE_CHECKING-equivalent without importing typing
@@ -295,6 +295,37 @@ DIALECT_HARD_RULES = {
   SELECT 1 FROM dual
   ```
   Or use INSERT INTO ... SELECT with UNION ALL for larger batches.""",
+
+    "mongodb": """\
+- This is a MongoDB connection. DO NOT generate SQL.
+- Generate queries as JSON envelopes (one JSON object per query):
+
+  Find documents:
+    {"op": "find", "collection": "NAME", "filter": {}, "sort": {"field": 1}, "limit": 50, "projection": {"_id": 0}}
+
+  Aggregation pipeline:
+    {"op": "aggregate", "collection": "NAME", "pipeline": [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]}
+
+  Count:
+    {"op": "countDocuments", "collection": "NAME", "filter": {}}
+
+  Distinct values:
+    {"op": "distinct", "collection": "NAME", "key": "fieldName"}
+
+  Insert documents:
+    {"op": "insertMany", "collection": "NAME", "documents": [{...}, {...}]}
+
+  Update:
+    {"op": "updateMany", "collection": "NAME", "filter": {"active": false}, "update": {"$set": {"active": true}}}
+
+  Delete:
+    {"op": "deleteMany", "collection": "NAME", "filter": {"status": "archived"}}
+
+- ObjectId fields: reference as strings in filters: {"_id": "507f1f77bcf86cd799439011"}
+- MongoDB uses $-prefixed operators: $gt, $lt, $in, $regex, $exists, $and, $or
+- Always include a filter in deleteMany/updateMany - empty filter {} affects ALL documents
+- Limit results: use "limit" key in find (not SQL LIMIT)
+- Collection names are case-sensitive""",
 }
 
 
@@ -311,6 +342,9 @@ DIALECT_SYNTAX_NOTES = {
     "oracle": "UPPERCASE identifiers by default, FETCH FIRST N ROWS ONLY (not LIMIT), "
                   "need FROM dual for SELECT without FROM, double-quotes for quoted identifiers, "
                   ":name placeholders, sequences (no AUTO_INCREMENT)",
+    "mongodb": "JSON envelope format (not SQL), collections instead of tables, "
+               "document-level schema (no fixed DDL), $-operator filters, "
+               "aggregation pipeline for complex queries",
 }
 
 
@@ -344,6 +378,7 @@ def _build_active_connections_section(active_connections: list[dict]) -> str:
             "postgresql": "PostgreSQL",
             "mysql": "MySQL",
             "oracle": "Oracle",
+            "mongodb": "MongoDB",
         }.get(db_type, db_type)
         suffix = "  ← default" if is_active else ""
         # Avoid double-prefix: version may already contain the DB name
@@ -369,6 +404,7 @@ def _build_active_connections_section(active_connections: list[dict]) -> str:
             "postgresql": "PostgreSQL",
             "mysql": "MySQL",
             "oracle": "Oracle",
+            "mongodb": "MongoDB",
         }.get(t, t)
         notes = DIALECT_SYNTAX_NOTES.get(t, "")
         lines.append(f"- {type_display} ({names_str}): {notes}")
@@ -392,6 +428,7 @@ def build_system_prompt(
     db_type: str = "postgresql",
     t0: SchemaIndex | None = None,
     t1: SchemaCatalog | None = None,
+    fk_graph: SchemaGraph | None = None,
     t2_context: str | None = None,
     knowledge_dir: Path | None = None,
     active_connections: list[dict] | None = None,
@@ -437,9 +474,10 @@ Do not guess or pretend you can access data.""")
     if t0 or t1:
         schema_parts = ["## Schema Context"]
         schema_parts.append(
-            "**USE THIS CONTEXT FIRST.** The table lists and DDLs below are already loaded — "
-            "do NOT re-discover with schema_search or schema_lookup unless you need a table "
-            "not shown here. When a skill says 'discover tables', check this section first."
+            "**USE THIS CONTEXT FIRST.** The table list, FK graph, and DDLs below are "
+            "already loaded — do NOT re-discover with schema_search or schema_lookup "
+            "unless you need a table not shown here. When a skill says 'discover tables', "
+            "check this section first."
         )
         if t0:
             from payp.db.introspection import format_t0_for_context
@@ -447,6 +485,9 @@ Do not guess or pretend you can access data.""")
         if t1:
             from payp.db.introspection import format_t1_for_context
             schema_parts.append(format_t1_for_context(t1))
+        if fk_graph and fk_graph.edges:
+            from payp.db.introspection import format_schema_graph_for_context
+            schema_parts.append(format_schema_graph_for_context(fk_graph))
         if t2_context:
             schema_parts.append("### Relevant Table Details (already loaded — DO NOT call schema_lookup or read_knowledge for these)")
             schema_parts.append(t2_context)
@@ -458,19 +499,25 @@ Do not guess or pretend you can access data.""")
             )
         sections.append("\n".join(schema_parts))
 
-    # 6. Knowledge base
-    if knowledge_dir and knowledge_dir.is_dir():
-        knowledge_parts = ["## Business Context"]
-        for f in sorted(knowledge_dir.glob("*.md")):
-            try:
-                content = f.read_text().strip()
-                if content:
-                    knowledge_parts.append(f"### {f.stem}")
-                    knowledge_parts.append(content)
-            except Exception:
-                pass
-        if len(knowledge_parts) > 1:
-            sections.append("\n".join(knowledge_parts))
+    # 6. Knowledge base — project-local (./payp/knowledge/) takes precedence over global
+    from payp.config import project_knowledge_dir
+    knowledge_parts = ["## Business Context"]
+    seen: set[str] = set()
+    for src_dir in (project_knowledge_dir(), knowledge_dir):
+        if src_dir and src_dir.is_dir():
+            for f in sorted(src_dir.glob("*.md")):
+                if f.name in seen:
+                    continue
+                seen.add(f.name)
+                try:
+                    content = f.read_text(encoding="utf-8").strip()
+                    if content:
+                        knowledge_parts.append(f"### {f.stem}")
+                        knowledge_parts.append(content)
+                except Exception:
+                    pass
+    if len(knowledge_parts) > 1:
+        sections.append("\n".join(knowledge_parts))
 
     # 7. Tools are added separately via tool definitions, not in prompt text
 

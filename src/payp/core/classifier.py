@@ -58,11 +58,73 @@ _DIALECT_ALIASES = {
     "mariadb": "mysql",
     "oracle": "oracle",
     "oracledb": "oracle",
+    "mongodb": "mongodb",
 }
 
 
 def _normalize_dialect(dialect: str) -> str:
     return _DIALECT_ALIASES.get((dialect or "").lower(), "postgres")
+
+
+def _classify_mql(mql: str) -> SqlClassification:
+    """Classify a MongoDB JSON-envelope query for security routing."""
+    import json
+    try:
+        doc = json.loads(mql)
+    except Exception:
+        return SqlClassification(
+            category=SqlCategory.OTHER,
+            statement_type="UNPARSEABLE",
+            risk_reason="Not valid JSON MQL envelope",
+        )
+    op = doc.get("op", "").lower()
+    # Internal introspection ops - always safe
+    if op in ("listcollections", "serverinfo", "dbstats", "collstats", "indexes", "sample"):
+        return SqlClassification(category=SqlCategory.SELECT, statement_type=op.upper())
+    # Read ops
+    if op in ("find", "aggregate", "countdocuments", "distinct"):
+        return SqlClassification(category=SqlCategory.SELECT, statement_type=op.upper())
+    # Write ops
+    if op in ("insertmany", "insertone"):
+        return SqlClassification(category=SqlCategory.DML_WRITE, statement_type="INSERT")
+    if op in ("updatemany", "updateone", "replaceone"):
+        return SqlClassification(category=SqlCategory.DML_WRITE, statement_type="UPDATE")
+    if op in ("deletemany", "deleteone"):
+        has_filter = bool(doc.get("filter"))
+        if op == "deletemany" and not has_filter:
+            return SqlClassification(
+                category=SqlCategory.HARD_BLOCK,
+                statement_type="DELETE",
+                has_where=False,
+                is_hard_block=True,
+                risk_reason="deleteMany with empty filter deletes every document",
+            )
+        empty_one = "" if has_filter else "deleteOne with empty filter removes an arbitrary doc"
+        return SqlClassification(
+            category=SqlCategory.DML_WRITE,
+            statement_type="DELETE",
+            has_where=has_filter,
+            risk_reason=empty_one,
+        )
+    # DDL-like
+    if op in ("createindex", "dropindex"):
+        return SqlClassification(category=SqlCategory.DDL, statement_type=op.upper())
+    # Dangerous
+    if op == "dropcollection":
+        return SqlClassification(
+            category=SqlCategory.HARD_BLOCK,
+            statement_type="DROP COLLECTION",
+            is_hard_block=True,
+            risk_reason="Drops entire collection and all its data",
+        )
+    if op == "dropdatabase":
+        return SqlClassification(
+            category=SqlCategory.HARD_BLOCK,
+            statement_type="DROP DATABASE",
+            is_hard_block=True,
+            risk_reason="Drops the entire database and all its collections",
+        )
+    return SqlClassification(category=SqlCategory.OTHER, statement_type=op.upper())
 
 
 def classify_sql(sql: str, dialect: str = "postgres") -> SqlClassification:
@@ -78,6 +140,10 @@ def classify_sql(sql: str, dialect: str = "postgres") -> SqlClassification:
             statement_type="EMPTY",
             risk_reason="Empty statement",
         )
+
+    # MongoDB: bypass sqlglot entirely - parse JSON envelope
+    if dialect == "mongodb":
+        return _classify_mql(sql_stripped)
 
     try:
         # Suppress sqlglot warnings for "unsupported syntax" — those go to logger
@@ -280,7 +346,23 @@ def statically_hard_blocked(sql: str, dialect: str = "postgres") -> str | None:
     if not sql_stripped:
         return None
 
-    # 1. Dangerous functions / admin commands (regex — AST-agnostic)
+    # MongoDB: use MQL classifier for static analysis
+    if dialect == "mongodb":
+        import json
+        try:
+            doc = json.loads(sql_stripped)
+        except Exception:
+            return None
+        op = doc.get("op", "").lower()
+        if op == "dropcollection":
+            return "dropCollection destroys the entire collection"
+        if op == "dropdatabase":
+            return "dropDatabase destroys the entire database"
+        if op == "deletemany" and not doc.get("filter"):
+            return "deleteMany with empty filter deletes all documents"
+        return None
+
+    # 1. Dangerous functions / admin commands (regex - AST-agnostic)
     for pattern, reason in _DANGEROUS_PATTERNS:
         if re.search(pattern, sql_stripped, re.IGNORECASE | re.MULTILINE):
             return reason

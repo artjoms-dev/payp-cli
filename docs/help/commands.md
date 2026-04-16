@@ -8,6 +8,7 @@ All commands start with `/`. Everything else is natural language to the AI.
 
 ## AI
 - `/models` — show/add AI providers
+- `/models check [openrouter]` — verify key works and show usage/balance metadata
 - `/mode` — show available modes
 - `/mode <name>` — switch security mode
 

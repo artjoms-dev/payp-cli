@@ -78,7 +78,7 @@ def hint(console: Console, msg: str) -> None:
 def section(console: Console, title: str) -> None:
     """Print a section header."""
     console.print(f"\n[{Color.ACCENT}]{title}[/{Color.ACCENT}]")
-    console.print(f"[{Color.DIM}]{'─' * 50}[/{Color.DIM}]")
+    console.print(f"[{Color.DIM}]{'-' * 50}[/{Color.DIM}]")
 
 
 def brand_title() -> str:

@@ -47,7 +47,25 @@ services:
       timeout: 5s
       retries: 30
 
+  mongo:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root_dev
+      MONGO_INITDB_DATABASE: payp_test
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./tests/seed_mongo.js:/docker-entrypoint-initdb.d/seed.js:ro
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
 volumes:
   pgdata:
   mysqldata:
   oracledata:
+  mongodata:

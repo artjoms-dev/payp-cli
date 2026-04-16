@@ -7,17 +7,14 @@ Two steps:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import time
 
-from prompt_toolkit import prompt as pt_prompt
 from rich import box
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 
 from payp.ui.theme import Color, section, success
-
-if TYPE_CHECKING:
-    pass
 
 
 def is_first_run() -> bool:
@@ -32,23 +29,62 @@ def should_prompt_model_setup() -> bool:
     return not load_models_config()
 
 
+def _render_banner_typing(console: Console, banner: str, duration_ms: int = 500) -> None:
+    """Render onboarding banner with a soft typewriter effect."""
+    total_chars = len(banner)
+    if total_chars <= 0:
+        return
+
+    max_frames = 100
+    step = max(1, total_chars // max_frames)
+    indices = list(range(step, total_chars + 1, step))
+    if indices[-1] != total_chars:
+        indices.append(total_chars)
+    frame_delay = (duration_ms / 1000.0) / len(indices)
+
+    with Live(console=console, auto_refresh=False) as live:
+        for idx in indices:
+            live.update(
+                Panel(
+                    banner[:idx],
+                    border_style=Color.BRAND,
+                    box=box.ROUNDED,
+                    padding=(1, 3),
+                ),
+                refresh=True,
+            )
+            time.sleep(frame_delay)
+
+
+def _type_block(console: Console, text: str, duration_ms: int = 450) -> None:
+    """Print a plain text block with a typewriter effect."""
+    total_chars = len(text)
+    if total_chars <= 0:
+        return
+
+    max_frames = 100
+    step = max(1, total_chars // max_frames)
+    indices = list(range(step, total_chars + 1, step))
+    if indices[-1] != total_chars:
+        indices.append(total_chars)
+    frame_delay = (duration_ms / 1000.0) / len(indices)
+
+    with Live(console=console, auto_refresh=False) as live:
+        for idx in indices:
+            live.update(text[:idx], refresh=True)
+            time.sleep(frame_delay)
+
+
 def render_welcome_banner(console: Console) -> None:
     """Render the onboarding welcome banner."""
     banner = (
-        f"[{Color.BRAND}]Welcome to payp[/{Color.BRAND}]\n\n"
-        f"[dim]Your AI database assistant.[/dim]\n\n"
+        "Welcome to payp\n\n"
+        "Your AI database assistant.\n\n"
         f"Let's get you set up in 2 steps:\n"
-        f"  [{Color.INFO}]1.[/{Color.INFO}] Configure an AI model\n"
-        f"  [{Color.INFO}]2.[/{Color.INFO}] Connect a database"
+        "  1. Configure an AI model\n"
+        "  2. Connect a database"
     )
-    console.print(
-        Panel(
-            banner,
-            border_style=Color.BRAND,
-            box=box.ROUNDED,
-            padding=(1, 3),
-        )
-    )
+    _render_banner_typing(console, banner, duration_ms=500)
     console.print()
 
 
@@ -56,19 +92,27 @@ def run_onboarding(console: Console) -> None:
     """Run the full first-run onboarding flow.
 
     Calls out to existing setup wizards for models and connections.
+    Pressing Esc inside any sub-wizard cancels that step cleanly
+    instead of crashing the CLI.
     """
+    from payp.cli import _setup_new_connection, _setup_new_provider
+    from payp.cli.runtime import prompt_confirm
+    from payp.cli.state import CommandCancelled
+
     render_welcome_banner(console)
 
     # Step 1: Model
-    section(console, "Step 1 of 2 — AI Model")
-    console.print(
-        "[dim]payp needs at least one AI model to generate SQL and "
-        "analyze data.[/dim]\n"
+    _type_block(
+        console,
+        "\nStep 1 of 2 — AI Model\n"
+        "--------------------------------------------------\n"
+        "payp needs at least one AI model to generate SQL and analyze data.\n",
+        duration_ms=420,
     )
-
-    # Import here to avoid circular imports
-    from payp.cli import _setup_new_provider
-    _setup_new_provider()
+    try:
+        _setup_new_provider(animate_intro=True)
+    except CommandCancelled:
+        console.print("[dim]Skipped. Run [bold]/models add[/bold] later.[/dim]")
 
     console.print()
 
@@ -77,12 +121,12 @@ def run_onboarding(console: Console) -> None:
     console.print(
         "[dim]Connect to a database now, or skip and run /db later.[/dim]\n"
     )
-
-    choice = pt_prompt("Connect a database now? [Y/n]: ").strip().lower()
-    if choice in ("", "y", "yes"):
-        from payp.cli import _setup_new_connection
-        _setup_new_connection()
-    else:
+    try:
+        if prompt_confirm("Connect a database now?", default=True):
+            _setup_new_connection()
+        else:
+            console.print("[dim]Skipped. Run [bold]/db[/bold] when ready.[/dim]")
+    except CommandCancelled:
         console.print("[dim]Skipped. Run [bold]/db[/bold] when ready.[/dim]")
 
     console.print()
@@ -107,5 +151,9 @@ def prompt_model_setup_only(console: Console) -> None:
     console.print()
 
     from payp.cli import _setup_new_provider
-    _setup_new_provider()
+    from payp.cli.state import CommandCancelled
+    try:
+        _setup_new_provider()
+    except CommandCancelled:
+        console.print("[dim]Skipped. Run [bold]/models add[/bold] later.[/dim]")
     console.print()
