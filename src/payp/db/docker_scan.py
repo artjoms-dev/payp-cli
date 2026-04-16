@@ -205,20 +205,11 @@ def _parse_ps(raw: str) -> list[tuple[str, str, str]]:
     return out
 
 
-def _detect_one(
-    container_id: str, image: str, name: str, inspect_raw: str,
-) -> DetectedDb | None:
-    """Build a DetectedDb from `docker inspect` JSON for one container."""
+def _detect_from_spec(image: str, name: str, spec: dict) -> DetectedDb | None:
+    """Build a DetectedDb from a parsed `docker inspect` spec dict."""
     dialect = _classify(image)
     if dialect is None:
         return None
-    try:
-        data = json.loads(inspect_raw)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(data, list) or not data:
-        return None
-    spec = data[0]
     env_list = (spec.get("Config") or {}).get("Env") or []
     env = _extract_env(env_list)
     ports = (spec.get("NetworkSettings") or {}).get("Ports") or {}
@@ -229,11 +220,28 @@ def _detect_one(
     return _BUILDERS[dialect](env, host_port, image, name)
 
 
-async def list_db_containers(timeout: float = 0.8) -> list[DetectedDb]:
+def _detect_one(
+    container_id: str, image: str, name: str, inspect_raw: str,
+) -> DetectedDb | None:
+    """Build a DetectedDb from `docker inspect` JSON for one container."""
+    try:
+        data = json.loads(inspect_raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, list) or not data:
+        return None
+    return _detect_from_spec(image, name, data[0])
+
+
+async def list_db_containers(timeout: float = 5.0) -> list[DetectedDb]:
     """Return DB containers running on the local Docker daemon.
 
     Never raises. Returns an empty list if docker is missing, the daemon
     is unreachable, the commands time out, or nothing matches.
+
+    Uses a single batched `docker inspect` call across all candidates rather
+    than one per container - on Windows each inspect can take 2-3s, so the
+    old N-parallel path blew past aggressive timeouts.
     """
     ps_out = await _run_docker(["ps", "--format", "{{json .}}"], timeout=timeout)
     if not ps_out:
@@ -243,18 +251,23 @@ async def list_db_containers(timeout: float = 0.8) -> list[DetectedDb]:
     if not candidates:
         return []
 
-    async def _inspect(cid: str, img: str, nm: str) -> DetectedDb | None:
-        raw = await _run_docker(["inspect", cid], timeout=timeout)
-        if not raw:
-            return None
-        return _detect_one(cid, img, nm, raw)
-
-    results = await asyncio.gather(
-        *(_inspect(cid, img, nm) for cid, img, nm in candidates),
-        return_exceptions=True,
+    inspect_raw = await _run_docker(
+        ["inspect", *(cid for cid, _, _ in candidates)], timeout=timeout,
     )
+    if not inspect_raw:
+        return []
+    try:
+        specs = json.loads(inspect_raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(specs, list) or len(specs) != len(candidates):
+        return []
+
     detected: list[DetectedDb] = []
-    for r in results:
-        if isinstance(r, DetectedDb):
-            detected.append(r)
+    for (_cid, img, nm), spec in zip(candidates, specs):
+        if not isinstance(spec, dict):
+            continue
+        d = _detect_from_spec(img, nm, spec)
+        if d is not None:
+            detected.append(d)
     return detected
