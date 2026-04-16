@@ -8,12 +8,20 @@ and command_prompt from here.
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from payp.cli.state import CommandCancelled, console
 
 T = TypeVar("T")
+
+# psycopg3 async refuses to run under Windows' default ProactorEventLoop.
+# Force the Selector policy *before* any loop is created so every code
+# path (our persistent loop, asyncio.run in worker threads, etc.) gets
+# a compatible loop. See psycopg docs: https://www.psycopg.org/psycopg3/docs/advanced/async.html#async-on-windows
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 _PERSISTENT_LOOP: asyncio.AbstractEventLoop | None = None
 
