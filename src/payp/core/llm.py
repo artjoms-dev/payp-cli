@@ -81,6 +81,38 @@ class LLMClient:
             elif name == "gemini":
                 os.environ["GEMINI_API_KEY"] = provider.api_key
 
+    def _resolve_model(self, model: str) -> tuple[str, dict[str, Any]]:
+        """Parse provider/model and return litellm-ready model + extra kwargs."""
+        providers = load_models_config()
+        extra_kwargs: dict[str, Any] = {}
+
+        if "/" in model:
+            provider_name, actual_model = model.split("/", 1)
+        else:
+            provider_name, actual_model = "", model
+
+        provider = providers.get(provider_name) if provider_name else None
+
+        if provider_name == "azure" and provider:
+            # litellm expects azure/<deployment_name>
+            model = f"azure/{actual_model}"
+            extra_kwargs["api_key"] = provider.api_key
+            if provider.base_url:
+                extra_kwargs["api_base"] = provider.base_url
+            if provider.api_version:
+                extra_kwargs["api_version"] = provider.api_version
+        elif provider_name == "ollama" and provider:
+            model = f"ollama/{actual_model}"
+            if provider.base_url:
+                extra_kwargs["api_base"] = provider.base_url
+        elif provider_name == "anthropic" and provider:
+            model = f"anthropic/{actual_model}"
+            extra_kwargs["api_key"] = provider.api_key
+            if provider.base_url:
+                extra_kwargs["api_base"] = provider.base_url
+
+        return model, extra_kwargs
+
     def get_executor_model(self) -> str:
         """Get the configured executor model name."""
         roles = load_model_roles()
@@ -105,11 +137,13 @@ class LLMClient:
         the reviewer to get structured JSON output via a JSON schema.
         """
         model = model or self.get_executor_model()
+        model, extra_kwargs = self._resolve_model(model)
 
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "stream": False,
+            **extra_kwargs,
         }
 
         if tools:
@@ -165,12 +199,14 @@ class LLMClient:
     ) -> AsyncIterator[StreamChunk]:
         """Send a streaming chat completion request. Yields chunks."""
         model = model or self.get_executor_model()
+        model, extra_kwargs = self._resolve_model(model)
 
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "stream": True,
             "stream_options": {"include_usage": True},
+            **extra_kwargs,
         }
 
         if tools:
