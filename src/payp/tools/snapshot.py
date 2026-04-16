@@ -8,12 +8,36 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import UTC, datetime
 from hashlib import md5
 from pathlib import Path
 from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
+
+
+def _validate_where_clause(clause: str) -> str | None:
+    """Reject obvious SQL injection patterns in WHERE clauses.
+
+    Returns error message if dangerous, None if OK.
+    WHERE clauses cannot be parameterized, so this heuristic plus
+    the approval flow provide defense-in-depth.
+    """
+    if ";" in clause:
+        return "WHERE clause must not contain semicolons"
+    if "--" in clause or "/*" in clause:
+        return "WHERE clause must not contain SQL comments"
+    # Strip quoted strings before checking keywords
+    unquoted = re.sub(r"'[^']*'", "", clause)
+    dangerous = re.search(
+        r"\b(DROP|DELETE|INSERT|UPDATE|TRUNCATE|ALTER|CREATE|GRANT|REVOKE|EXEC|EXECUTE)\b",
+        unquoted,
+        re.IGNORECASE,
+    )
+    if dangerous:
+        return f"WHERE clause contains forbidden keyword: {dangerous.group()}"
+    return None
 
 
 class SnapshotBeforeDeleteTool(BaseTool):
@@ -73,6 +97,9 @@ class SnapshotBeforeDeleteTool(BaseTool):
         # It is covered by the same approval flow as execute_sql.
         sql = f"SELECT * FROM {table_q}"  # nosec B608
         if where:
+            err = _validate_where_clause(where)
+            if err:
+                return ToolResult(success=False, error=err)
             sql += f" WHERE {where}"  # nosec B608
 
         try:
