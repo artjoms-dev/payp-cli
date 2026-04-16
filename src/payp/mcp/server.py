@@ -46,10 +46,11 @@ from payp.models import SecurityMode
 from payp.tools.base import ToolResult
 
 # --- logging: always stderr for stdio MCP servers ---
+log_level = logging.DEBUG if os.environ.get("PAYP_DEBUG") else logging.INFO
 logging.basicConfig(
-    level=logging.INFO,
-    stream=sys.stderr,
+    level=log_level,
     format="[payp-mcp] %(levelname)s %(name)s: %(message)s",
+    stream=sys.stderr,
 )
 logger = logging.getLogger("payp.mcp")
 

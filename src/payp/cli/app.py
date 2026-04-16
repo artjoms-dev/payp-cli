@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import sys
 from typing import Annotated
 
 import typer
@@ -25,8 +28,19 @@ def main(
     version: Annotated[
         bool, typer.Option("--version", "-v", help="Show version")
     ] = False,
+    debug: Annotated[
+        bool, typer.Option("--debug", "-d", help="Enable debug logging to stderr")
+    ] = False,
 ) -> None:
     """payp — AI-powered CLI for data engineers."""
+    # Configure logging — default WARNING, --debug enables DEBUG
+    log_level = logging.DEBUG if debug or os.environ.get("PAYP_DEBUG") else logging.WARNING
+    logging.basicConfig(
+        level=log_level,
+        format="[payp] %(levelname)s %(name)s: %(message)s",
+        stream=sys.stderr,
+    )
+
     if version:
         console.print(f"payp v{__version__}")
         raise typer.Exit()
