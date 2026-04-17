@@ -150,17 +150,17 @@ def _build_toolbar() -> str:
         if ct.total_cost_usd > 0:
             parts.append(f"${ct.total_cost_usd:.4f}")
 
-    # Context usage - last turn's input tokens vs model context window
-    if client and ct.last_input_tokens > 0:
-        try:
-            from payp.core.compaction import get_model_context_size
-            model_name = client.get_executor_model()
-            max_ctx = get_model_context_size(model_name)
-            if max_ctx > 0:
-                pct = int(ct.last_input_tokens / max_ctx * 100)
-                parts.append(f"ctx {pct}%")
-        except Exception:
-            pass
+        # Context usage - last turn's input tokens vs model context window
+        if ct.last_input_tokens > 0:
+            try:
+                from payp.core.compaction import get_model_context_size
+                model_name = client.get_executor_model()
+                max_ctx = get_model_context_size(model_name)
+                if max_ctx > 0:
+                    pct = int(ct.last_input_tokens / max_ctx * 100)
+                    parts.append(f"ctx {pct}%")
+            except Exception:
+                pass
 
     # Connection
     conn_name = _state.get("active_connection")

@@ -4,8 +4,6 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-logger = logging.getLogger(__name__)
-
 from payp.core.classifier import SqlCategory, classify_sql, statically_hard_blocked
 from payp.core.reviewer import Reviewer, Verdict
 from payp.models import SecurityMode
@@ -15,6 +13,8 @@ from payp.ui.streaming import display_tool_call, display_tool_result
 
 if TYPE_CHECKING:
     from ._facade import ChatSession
+
+logger = logging.getLogger(__name__)
 
 
 def log_sql_execution(

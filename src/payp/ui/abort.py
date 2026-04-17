@@ -34,10 +34,6 @@ def _raw_stdin() -> Iterator[None]:
     if not _can_raw_stdin():
         yield
         return
-    if _IS_WINDOWS:
-        # Windows doesn't need raw mode — msvcrt reads keys directly
-        yield
-        return
     fd = sys.stdin.fileno()
     old_attrs = termios.tcgetattr(fd)
     try:
