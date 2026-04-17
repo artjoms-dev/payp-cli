@@ -24,6 +24,8 @@ from psycopg.rows import dict_row
 
 from payp.models import ConnectionCredential, ConnectionProfile, DbType, QueryResult
 
+logger = logging.getLogger(__name__)
+
 
 class ConnectionError(Exception):
     """Raised when a database connection fails."""
@@ -99,6 +101,7 @@ class _PostgresDriver:
                 row_factory=dict_row,
             )
         except Exception as e:
+            logger.exception("Postgres connect failed")
             raise ConnectionError(f"Failed to connect to {self.profile.name}: {e}") from e
 
         result = await self.execute_raw("SELECT version()")
@@ -249,6 +252,7 @@ class ConnectionManager:
             if self._should_auto_reconnect(e):
                 if await self._auto_reconnect():
                     return await self._driver.execute_raw(sql, params)
+            logger.exception("execute_raw failed")
             raise
 
     async def stream_raw(
@@ -274,6 +278,7 @@ class ConnectionManager:
             if self._should_auto_reconnect(e):
                 if await self._auto_reconnect():
                     return await self._driver.execute(sql, limit)
+            logger.exception("execute failed")
             raise
 
     def _should_auto_reconnect(self, exc: BaseException) -> bool:

@@ -149,7 +149,8 @@ def _cmd_stats(args: str) -> None:
         from payp.tools.stats import profile_table
         profile = _run_async(profile_table(mgr, table, schema))
     except Exception as e:
-        console.print(f"[red]Stats failed: {e}[/red]")
+        from payp.ui.errors import show_error
+        show_error("Stats failed", str(e), exc=e, logger_name="payp.cli.commands.schema")
         return
 
     if profile.get("error") and not profile.get("columns"):

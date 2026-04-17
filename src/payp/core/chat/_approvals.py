@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from payp.models import SecurityMode
@@ -9,6 +10,8 @@ from payp.ui.streaming import display_tool_call, display_tool_result
 
 if TYPE_CHECKING:
     from ._facade import ChatSession
+
+logger = logging.getLogger(__name__)
 
 
 async def handle_knowledge_proposal(
@@ -222,6 +225,7 @@ async def execute_destructive_with_approval(
     try:
         preview = await tool.preview(args, context)
     except Exception as e:
+        logger.exception("tool preview failed")
         preview = {"summary": f"Preview failed: {e}", "items": [], "warning": None}
 
     if preview is None:

@@ -10,10 +10,13 @@ allowed_tools, db_types, author, version).
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
 from payp.skills.models import Skill, SkillFrontmatter
+
+logger = logging.getLogger(__name__)
 
 # Fields that are parsed as lists (YAML flow-style: [a, b, c])
 _LIST_FIELDS = {"allowed_tools", "db_types"}
@@ -108,6 +111,7 @@ def parse_skill_file(path: Path, scope: str = "builtin") -> Skill | None:
     try:
         fm_dict = _parse_frontmatter_block(fm_block)
     except Exception as e:
+        logger.exception("skill frontmatter parse failed")
         _warn(f"Skipped skill {path}: could not parse frontmatter ({e})")
         return None
 
@@ -124,6 +128,7 @@ def parse_skill_file(path: Path, scope: str = "builtin") -> Skill | None:
     try:
         frontmatter = SkillFrontmatter(**fm_dict)  # type: ignore[arg-type]
     except Exception as e:
+        logger.exception("skill frontmatter validation failed")
         _warn(f"Skipped skill {path}: invalid frontmatter ({e})")
         return None
 

@@ -86,4 +86,6 @@ def mcp_serve() -> None:
 
 def app_entry() -> None:
     """Entry point for the payp CLI."""
+    from payp.logging_setup import setup_logging
+    setup_logging()
     app()

@@ -6,6 +6,7 @@ Handles streaming, tool calling, and cost tracking.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -19,6 +20,9 @@ from payp.models import CostTracker
 # Suppress litellm's verbose logging
 litellm.suppress_debug_info = True
 litellm.set_verbose = False
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
 
 
 @dataclass
@@ -65,6 +69,10 @@ class LLMClient:
 
     def __init__(self) -> None:
         self.cost_tracker = CostTracker()
+        # Per-request usage (reset on every _track_cost call)
+        self.last_input_tokens: int = 0
+        self.last_output_tokens: int = 0
+        self.last_cost: float = 0.0
         self._configure_providers()
 
     def _configure_providers(self) -> None:
@@ -285,7 +293,10 @@ class LLMClient:
         self._track_cost(input_tokens, output_tokens, cost)
 
     def _track_cost(self, input_tokens: int, output_tokens: int, cost: float) -> None:
-        """Accumulate cost tracking."""
+        """Accumulate cost tracking and store per-request snapshot."""
+        self.last_input_tokens = input_tokens
+        self.last_output_tokens = output_tokens
+        self.last_cost = cost
         self.cost_tracker.total_input_tokens += input_tokens
         self.cost_tracker.total_output_tokens += output_tokens
         self.cost_tracker.total_cost_usd += cost

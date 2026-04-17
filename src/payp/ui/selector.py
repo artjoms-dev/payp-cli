@@ -62,6 +62,7 @@ def interactive_select(
     visible: int = 5,
     actions: list[SelectorAction] | None = None,
     title_style: str = "bold",
+    searchable: bool = False,
 ) -> SelectorResult:
     """Show an interactive selector and return the user's choice.
 
@@ -71,6 +72,7 @@ def interactive_select(
         items: List of selectable items
         visible: Number of items visible at once (scrolls if more)
         actions: Custom key actions (e.g., 'd' to delete)
+        searchable: Enable type-to-filter (letters filter, backspace deletes)
 
     Returns:
         SelectorResult with action type and selected item
@@ -79,16 +81,30 @@ def interactive_select(
         console.print("[dim]No items.[/dim]")
         return SelectorResult(action="cancel")
 
-    state = {
+    state: dict[str, Any] = {
         "cursor": 0,
-        "offset": 0,  # Scroll offset
+        "offset": 0,
         "items": list(items),
+        "all_items": list(items),
+        "query": "",
         "result": SelectorResult(action="cancel"),
         "done": False,
     }
 
     actions = actions or []
     action_map = {a.key: a for a in actions}
+
+    def _apply_filter() -> None:
+        q = state["query"].lower()
+        if q:
+            state["items"] = [
+                it for it in state["all_items"]
+                if q in it.label.lower() or q in it.description.lower()
+            ]
+        else:
+            state["items"] = list(state["all_items"])
+        state["cursor"] = 0
+        state["offset"] = 0
 
     kb = KeyBindings()
 
@@ -122,11 +138,12 @@ def interactive_select(
         state["done"] = True
         event.app.exit()
 
-    @kb.add("q")
-    def _quit(event: Any) -> None:
-        state["result"] = SelectorResult(action="cancel")
-        state["done"] = True
-        event.app.exit()
+    if not searchable:
+        @kb.add("q")
+        def _quit(event: Any) -> None:
+            state["result"] = SelectorResult(action="cancel")
+            state["done"] = True
+            event.app.exit()
 
     # Register custom action keys
     for action_key in action_map:
@@ -150,6 +167,27 @@ def interactive_select(
             return _handler
         kb.add(action_key)(_make_handler(action_key))
 
+    if searchable:
+        @kb.add("backspace")
+        def _backspace(event: Any) -> None:
+            if state["query"]:
+                state["query"] = state["query"][:-1]
+                _apply_filter()
+
+        from prompt_toolkit.filters import Condition
+        from prompt_toolkit.keys import Keys
+
+        @Condition
+        def _is_searchable() -> bool:
+            return True
+
+        @kb.add(Keys.Any, filter=_is_searchable)
+        def _char(event: Any) -> None:
+            ch = event.data
+            if ch.isprintable() and len(ch) == 1:
+                state["query"] += ch
+                _apply_filter()
+
     def _get_text() -> list[tuple[str, str]]:
         """Build the formatted text for the selector display."""
         result: list[tuple[str, str]] = []
@@ -165,57 +203,72 @@ def interactive_select(
             result.append(("", "\n"))
         else:
             result.append((title_style, f" {title}\n"))
+
+        # Search bar
+        if searchable:
+            q = state["query"]
+            if q:
+                result.append(("fg:gray", " filter: "))
+                result.append(("bold", q))
+                result.append(("fg:gray", f"  ({len(state['items'])} matches)\n"))
+            else:
+                result.append(("fg:gray", " type to filter...\n"))
+
         result.append(("", "\n"))
 
-        # Items
-        visible_items = state["items"][state["offset"]:state["offset"] + visible]
-        for i, item in enumerate(visible_items):
-            actual_idx = state["offset"] + i
-            is_selected = actual_idx == state["cursor"]
+        cur_items = state["items"]
 
-            # 3 chars for prefix (" ▸ " or "   ")
-            prefix_len = 3
-            label_len = len(item.label)
+        if not cur_items:
+            result.append(("fg:gray", "   no matches\n"))
+        else:
+            visible_items = cur_items[state["offset"]:state["offset"] + visible]
+            for i, item in enumerate(visible_items):
+                actual_idx = state["offset"] + i
+                is_selected = actual_idx == state["cursor"]
 
-            if is_selected:
-                result.append((PTColor.BRAND_ALT, " ▸ "))
-                if item.style and " " in item.label:
-                    prefix, rest = item.label.split(" ", 1)
-                    result.append((item.style, prefix + " "))
-                    result.append(("bold", rest))
+                prefix_len = 3
+                label_len = len(item.label)
+
+                if is_selected:
+                    result.append((PTColor.BRAND_ALT, " ▸ "))
+                    if item.style and " " in item.label:
+                        prefix, rest = item.label.split(" ", 1)
+                        result.append((item.style, prefix + " "))
+                        result.append(("bold", rest))
+                    else:
+                        result.append(("bold", item.label))
                 else:
-                    result.append(("bold", item.label))
-            else:
-                result.append(("", "   "))
-                if item.style and " " in item.label:
-                    prefix, rest = item.label.split(" ", 1)
-                    result.append((item.style, prefix + " "))
-                    result.append(("", rest))
-                else:
-                    result.append(("", item.label))
+                    result.append(("", "   "))
+                    if item.style and " " in item.label:
+                        prefix, rest = item.label.split(" ", 1)
+                        result.append((item.style, prefix + " "))
+                        result.append(("", rest))
+                    else:
+                        result.append(("", item.label))
 
-            if item.description:
-                # 2 chars for "  " separator between label and description
-                available = term_width - prefix_len - label_len - 2
-                if available > 5:
-                    desc = item.description
-                    if len(desc) > available:
-                        desc = desc[: available - 1] + "…"
-                    result.append(("fg:gray", f"  {desc}"))
+                if item.description:
+                    available = term_width - prefix_len - label_len - 2
+                    if available > 5:
+                        desc = item.description
+                        if len(desc) > available:
+                            desc = desc[: available - 1] + "…"
+                        result.append(("fg:gray", f"  {desc}"))
 
-            result.append(("", "\n"))
+                result.append(("", "\n"))
 
-        # Scroll indicators
-        total = len(state["items"])
-        if total > visible:
-            if state["offset"] > 0:
-                result.append(("fg:gray", "   ↑ more above\n"))
-            if state["offset"] + visible < total:
-                result.append(("fg:gray", "   ↓ more below\n"))
+            # Scroll indicators
+            total = len(cur_items)
+            if total > visible:
+                if state["offset"] > 0:
+                    result.append(("fg:gray", "   ↑ more above\n"))
+                if state["offset"] + visible < total:
+                    result.append(("fg:gray", "   ↓ more below\n"))
 
         # Footer
         result.append(("", "\n"))
         footer_parts = ["↑↓ navigate", "Enter select", "Esc cancel"]
+        if searchable:
+            footer_parts.insert(0, "type to filter")
         for a in actions:
             footer_parts.append(f"'{a.key}' {a.label}")
         result.append(("fg:gray", " " + "  │  ".join(footer_parts)))

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Dialect-specific SQL for CheckCascadeTool
@@ -289,4 +292,5 @@ class CheckCascadeTool(BaseTool):
             )
 
         except Exception as e:
+            logger.exception("SchemaTool failed")
             return ToolResult(success=False, error=str(e), summary=f"Cascade check failed: {e}")

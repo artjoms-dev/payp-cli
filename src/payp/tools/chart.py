@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
 from payp.ui.charts import (
     render_bar_chart,
     render_box_plot,
@@ -84,6 +87,7 @@ class ChartTool(BaseTool):
         try:
             rows = await conn.execute_raw(sql)
         except Exception as e:
+            logger.exception("ChartTool query failed")
             return ToolResult(success=False, error=f"Query failed: {e}")
 
         if not rows:
@@ -224,6 +228,7 @@ class ChartTool(BaseTool):
             )
 
         except Exception as e:
+            logger.exception("ChartTool render failed")
             return ToolResult(success=False, error=f"Chart failed: {e}")
 
 

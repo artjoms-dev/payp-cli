@@ -11,6 +11,7 @@ Runs shell commands in a subprocess for:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 from pathlib import Path
@@ -19,6 +20,8 @@ from typing import Any
 _IS_WINDOWS = sys.platform == "win32"
 
 from payp.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 30
 MAX_OUTPUT = 50_000
@@ -108,6 +111,7 @@ class ShellExecTool(BaseTool):
                 cwd=Path.cwd(),
             )
         except Exception as e:
+            logger.exception("ShellExecTool spawn failed")
             return ToolResult(
                 success=False,
                 error=f"Failed to spawn shell: {e}",

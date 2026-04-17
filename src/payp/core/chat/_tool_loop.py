@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
-from payp.ui.streaming import display_tool_call, display_tool_result, stream_response
+from payp.ui.streaming import (
+    display_tool_call,
+    display_tool_result,
+    display_usage_line,
+    stream_response,
+)
 
 from ._tool_io import parse_tool_calls, summarize_tool_response
 
 if TYPE_CHECKING:
     from ._facade import ChatSession
+
+logger = logging.getLogger(__name__)
 
 
 MAX_TOOL_ROUNDS = 30  # Prevent infinite tool call loops (Claude Code uses 30-50)
@@ -41,8 +49,7 @@ async def run_tool_loop(
             try:
                 session.session.log_assistant(content, model=session.llm.get_executor_model())
             except Exception:
-                # Logging must never break the chat loop.
-                pass
+                logger.exception("session log_assistant failed")
 
         # If no tool calls, we're done
         if not raw_tool_calls:
@@ -64,6 +71,8 @@ async def run_tool_loop(
                     }
                 )
                 continue  # retry the loop
+            # Show per-turn usage stats
+            _show_usage(session)
             break
 
         # Process tool calls
@@ -165,7 +174,7 @@ async def run_tool_loop(
                     summary=_tc_sum,
                 )
             except Exception:
-                pass
+                logger.exception("session log_tool_call failed")
 
             # Wrap the payload in an untrusted envelope so a row value
             # like "ignore previous instructions" is received as DATA,
@@ -195,3 +204,21 @@ async def run_tool_loop(
         )
 
     # Done
+
+
+def _show_usage(session: ChatSession) -> None:
+    """Print a right-aligned dim line with per-turn tokens, cost, context %."""
+    llm = session.llm
+    ctx_pct: float | None = None
+    try:
+        stats = session.get_context_stats()
+        ctx_pct = stats.usage_ratio * 100
+    except Exception:
+        pass
+    display_usage_line(
+        session.console,
+        llm.last_input_tokens,
+        llm.last_output_tokens,
+        llm.last_cost,
+        context_pct=ctx_pct,
+    )

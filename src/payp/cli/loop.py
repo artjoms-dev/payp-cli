@@ -4,7 +4,7 @@ Houses _ensure_chat_session (rebuilds the ChatSession when connection or mode
 changes) and the session-log helpers (_log_db_connected_to_session,
 _log_memory_backend_to_session, _short).
 
-_interactive_loop lives here too — it is populated in dispatch.py's init
+_interactive_loop lives here too - it is populated in dispatch.py's init
 so that the completer and handler are available first. See dispatch.py.
 """
 
@@ -13,6 +13,16 @@ from __future__ import annotations
 from payp.cli.runtime import _run_async
 from payp.cli.state import _state, console, get_config
 from payp.config import load_models_config
+
+
+def _stop_banner_animator() -> None:
+    """Stop the welcome-banner shimmer thread if it is still running.
+
+    Pops the animator out of state so subsequent calls are no-ops.
+    """
+    anim = _state.pop("banner_anim", None)
+    if anim is not None:
+        anim.stop()
 
 
 def _ensure_chat_session() -> None:
@@ -140,7 +150,7 @@ def _build_toolbar() -> str:
         if ct.total_cost_usd > 0:
             parts.append(f"${ct.total_cost_usd:.4f}")
 
-    # Context usage — last turn's input tokens vs model context window
+    # Context usage - last turn's input tokens vs model context window
     if client and ct.last_input_tokens > 0:
         try:
             from payp.core.compaction import get_model_context_size
@@ -158,6 +168,20 @@ def _build_toolbar() -> str:
         parts.append(conn_name)
 
     return " \u2502 ".join(parts) if parts else ""
+
+
+def _build_prompt():  # -> FormattedText
+    """Build formatted prompt showing connected DB name in green."""
+    from prompt_toolkit.formatted_text import FormattedText
+
+    db = _state.get("active_connection")
+    if db:
+        return FormattedText([
+            ("", "payp "),
+            ("class:db", f"({db})"),
+            ("", " > "),
+        ])
+    return FormattedText([("", "payp> ")])
 
 
 def _interactive_loop() -> None:
@@ -181,6 +205,7 @@ def _interactive_loop() -> None:
             "completion-menu.meta.completion": "noinherit #888888",
             "completion-menu.meta.completion.current": "noinherit #888888 underline",
             "bottom-toolbar": "bg:#333333 #aaaaaa",
+            "db": "#B4E04C",
         }),
     )
 
@@ -189,10 +214,13 @@ def _interactive_loop() -> None:
 
     while True:
         try:
-            user_input = session.prompt("payp> ", bottom_toolbar=_build_toolbar).strip()
+            user_input = session.prompt(_build_prompt(), bottom_toolbar=_build_toolbar).strip()
         except (EOFError, KeyboardInterrupt):
+            _stop_banner_animator()
             console.print("\n[dim]Goodbye![/dim]")
             break
+
+        _stop_banner_animator()
 
         if not user_input:
             continue
@@ -220,4 +248,16 @@ def _interactive_loop() -> None:
             except KeyboardInterrupt:
                 console.print("\n[dim]Cancelled.[/dim]")
             except Exception as e:
-                console.print(f"[red]Error: {e}[/red]")
+                from payp.ui.errors import show_error
+                short = str(e).strip() or type(e).__name__
+                show_error(
+                    "Couldn't process that input",
+                    short,
+                    exc=e,
+                    hint=(
+                        "Try /help for available commands, "
+                        "/models to configure the AI provider, "
+                        "or /db to check your database connection."
+                    ),
+                    logger_name="payp.chat",
+                )

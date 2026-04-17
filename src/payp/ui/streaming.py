@@ -79,6 +79,39 @@ def display_sql(console: Console, sql: str, reverse_sql: str | None = None) -> N
         ))
 
 
+def display_usage_line(
+    console: Console,
+    input_tokens: int,
+    output_tokens: int,
+    cost: float,
+    context_pct: float | None = None,
+) -> None:
+    """Show a right-aligned dim usage line after an LLM response."""
+    parts: list[str] = []
+    total = input_tokens + output_tokens
+    if total > 0:
+        parts.append(f"{_fmt_tokens(input_tokens)} in / {_fmt_tokens(output_tokens)} out")
+    if cost > 0:
+        parts.append(f"${cost:.4f}")
+    if context_pct is not None:
+        parts.append(f"ctx {context_pct:.0f}%")
+    if not parts:
+        return
+    line = "  ".join(parts)
+    console.print(f"[dim]{line}[/dim]", justify="right")
+
+
+def _fmt_tokens(n: int) -> str:
+    """Format token count: 340, 1.2k, 1.2M."""
+    if n < 1000:
+        return str(n)
+    if n < 1_000_000:
+        v = n / 1000
+        return f"{v:.1f}k" if v < 100 else f"{v:.0f}k"
+    v = n / 1_000_000
+    return f"{v:.1f}M"
+
+
 def _truncate(s: str, max_len: int) -> str:
     """Truncate string with ellipsis."""
     return s[:max_len] + "..." if len(s) > max_len else s

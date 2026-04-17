@@ -27,6 +27,14 @@ def _cmd_models(args: str) -> None:
         _setup_new_provider()
         return
 
+    if subcommand == "set":
+        role = parts[1].lower() if len(parts) > 1 else ""
+        if role not in ("executor", "reviewer"):
+            console.print("[red]Usage: /models set executor  or  /models set reviewer[/red]")
+            return
+        _cmd_models_set(role)
+        return
+
     if subcommand in {"check", "balance"}:
         provider_name = parts[1].lower() if len(parts) > 1 else "openrouter"
         _check_provider(provider_name, providers)
@@ -310,6 +318,127 @@ def _setup_new_provider(*, animate_intro: bool = False) -> None:
 
     save_models_config(providers, roles)
     console.print(f"\n[{Color.BRAND_ALT}]{name} configured.[/{Color.BRAND_ALT}]")
+
+
+def _fetch_openrouter_models(api_key: str) -> list[dict]:
+    """Fetch models from OpenRouter API, filtered to tool-calling capable ones"""
+    status, payload, err = _openrouter_get("/models", api_key)
+    if status != 200 or not isinstance(payload, dict):
+        if err:
+            console.print(f"[red]Failed to fetch models: {err}[/red]")
+        else:
+            console.print("[red]Failed to fetch models from OpenRouter.[/red]")
+        return []
+    raw = payload.get("data", [])
+    if not isinstance(raw, list):
+        return []
+    models = []
+    for m in raw:
+        if not isinstance(m, dict):
+            continue
+        mid = m.get("id", "")
+        if mid.startswith("openrouter/"):
+            continue
+        params = m.get("supported_parameters") or []
+        if "tools" not in params:
+            continue
+        pricing = m.get("pricing") or {}
+        prompt_price = float(pricing.get("prompt", 0)) * 1_000_000
+        compl_price = float(pricing.get("completion", 0)) * 1_000_000
+        if prompt_price < 0 or compl_price < 0:
+            continue
+        ctx = m.get("context_length", 0)
+        models.append({
+            "id": mid,
+            "name": m.get("name", mid),
+            "prompt_price": prompt_price,
+            "compl_price": compl_price,
+            "ctx": ctx,
+            "free": prompt_price == 0 and compl_price == 0,
+        })
+    # Recommended models first, then by price ascending
+    recommended = {"anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4.5",
+                    "anthropic/claude-sonnet-4.6", "google/gemini-2.5-pro",
+                    "google/gemini-2.5-flash", "openai/gpt-4.1",
+                    "deepseek/deepseek-chat-v3-0324"}
+    models.sort(key=lambda m: (m["id"] not in recommended, m["prompt_price"], m["id"]))
+    return models
+
+
+def _select_model(
+    models: list[dict], role: str, *, allow_skip: bool = False,
+) -> str | None:
+    """Show interactive selector for a model role (executor or reviewer)."""
+    from payp.ui.selector import SelectorItem, interactive_select
+    from payp.ui.theme import PTColor
+
+    items: list[SelectorItem] = []
+    if allow_skip:
+        items.append(SelectorItem(
+            label="(skip)", value=None, description="no reviewer",
+        ))
+    for m in models:
+        if m["free"]:
+            price_tag = "free"
+        else:
+            price_tag = f"${m['prompt_price']:.2f}/${m['compl_price']:.2f} per 1M tok"
+        ctx_tag = f"{m['ctx'] // 1000}k ctx" if m["ctx"] else ""
+        desc = f"{price_tag}  {ctx_tag}".strip()
+        items.append(SelectorItem(
+            label=m["id"], value=m["id"], description=desc,
+        ))
+
+    title: list[tuple[str, str]] = [
+        (PTColor.BRAND, f"Select {role}"),
+    ]
+    result = interactive_select(
+        console=console, title=title, items=items, visible=12, searchable=True,
+    )
+    if result.action != "select" or result.item is None:
+        return None
+    return result.item.value
+
+
+def _cmd_models_set(role: str) -> None:
+    """Interactive model picker for a single role (executor or reviewer)."""
+    from payp.ui.theme import Color
+
+    providers = load_models_config()
+    provider = providers.get("openrouter")
+    if not provider:
+        console.print(
+            "[yellow]OpenRouter is not configured. Run /models add first.[/yellow]"
+        )
+        return
+
+    console.print("[dim]Fetching available models from OpenRouter...[/dim]")
+    models = _fetch_openrouter_models(provider.api_key)
+    if not models:
+        return
+
+    console.print(f"[dim]{len(models)} models with tool-calling support[/dim]\n")
+
+    allow_skip = role == "reviewer"
+    choice = _select_model(models, role, allow_skip=allow_skip)
+    if choice is None and not allow_skip:
+        console.print("[dim]Cancelled.[/dim]")
+        return
+
+    roles = load_model_roles()
+    if role == "executor":
+        roles.executor = f"openrouter/{choice}"
+    else:
+        roles.reviewer = f"openrouter/{choice}" if choice else None
+
+    save_models_config(providers, roles)
+
+    if choice:
+        console.print(
+            f"  {role.capitalize()}: [{Color.BRAND_ALT}]{choice}[/{Color.BRAND_ALT}]"
+        )
+    else:
+        console.print(f"  {role.capitalize()}: [dim]removed[/dim]")
+    console.print(f"[{Color.BRAND_ALT}]Saved.[/{Color.BRAND_ALT}]")
 
 
 def _check_provider(provider_name: str, providers: dict[str, ModelProvider]) -> None:

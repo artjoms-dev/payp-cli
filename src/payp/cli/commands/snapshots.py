@@ -111,7 +111,11 @@ def _cmd_rollback() -> None:
             return
         preview_rows = [json.loads(line) for line in lines[1:4]]
     except Exception as e:
-        console.print(f"[red]Failed to read snapshot: {e}[/red]")
+        from payp.ui.errors import show_error
+        show_error(
+            "Failed to read snapshot", str(e), exc=e,
+            logger_name="payp.cli.commands.snapshots",
+        )
         return
 
     if preview_rows:
@@ -148,7 +152,8 @@ def _cmd_rollback() -> None:
             tool.call({"file": str(filepath)}, {"connection_manager": mgr})
         )
     except Exception as e:
-        console.print(f"[red]Restore failed: {e}[/red]")
+        from payp.ui.errors import show_error
+        show_error("Restore failed", str(e), exc=e, logger_name="payp.cli.commands.snapshots")
         return
 
     if tool_result.success:

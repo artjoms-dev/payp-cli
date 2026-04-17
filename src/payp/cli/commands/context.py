@@ -25,7 +25,8 @@ def _cmd_compact() -> None:
         if stats.get("saved_tokens", 0) == 0:
             console.print("[dim]No tokens saved (conversation too short).[/dim]")
     except Exception as e:
-        console.print(f"[red]Compaction failed: {e}[/red]")
+        from payp.ui.errors import show_error
+        show_error("Compaction failed", str(e), exc=e, logger_name="payp.cli.commands.context")
 
 
 def _cmd_more() -> None:
@@ -80,7 +81,8 @@ def _cmd_more() -> None:
     try:
         result = _run_async(mgr.execute(paged_sql, limit=page_size))
     except Exception as e:
-        console.print(f"[red]Pagination failed: {e}[/red]")
+        from payp.ui.errors import show_error
+        show_error("Pagination failed", str(e), exc=e, logger_name="payp.cli.commands.context")
         return
 
     if not result.columns or result.row_count == 0:
