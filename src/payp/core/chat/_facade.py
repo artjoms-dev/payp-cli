@@ -18,7 +18,7 @@ from rich.console import Console
 from payp.core.llm import LLMClient
 from payp.db.connection import ConnectionManager
 from payp.models import SchemaCatalog, SchemaGraph, SchemaIndex, SecurityMode
-from payp.prompts.system import build_system_prompt
+from payp.prompts.system import SystemPrompt, build_system_prompt
 from payp.skills.registry import SkillRegistry, discover_skills
 from payp.storage.sessions import SessionWriter
 from payp.storage.transaction_log import TransactionLog
@@ -199,8 +199,8 @@ class ChatSession:
     ) -> Any:
         return await execute_sql_with_mode(self, tool, args, context, user_request)
 
-    async def _get_system_prompt(self, user_text: str = "") -> str:
-        """Build the dynamic system prompt with smart T2 injection."""
+    async def _get_system_prompt(self, user_text: str = "") -> SystemPrompt:
+        """Build the system prompt (static + dynamic halves) with smart T2 injection."""
         conn_name = None
         db_version = None
         db_type = "postgresql"
@@ -251,18 +251,19 @@ class ChatSession:
             advanced_tool_names=advanced_tool_names,
         )
 
-    def get_context_stats(self, system_prompt: str = "") -> Any:
+    def get_context_stats(self, system_prompt: str | SystemPrompt = "") -> Any:
         """Return current context usage statistics."""
         from payp.core.compaction import count_tokens, get_context_stats
         model = self.llm.get_executor_model()
+        sys_text = str(system_prompt) if system_prompt else ""
         sys_tokens = (
-            count_tokens([{"role": "system", "content": system_prompt}], model)
-            if system_prompt
+            count_tokens([{"role": "system", "content": sys_text}], model)
+            if sys_text
             else 0
         )
         return get_context_stats(self.messages, model, system_prompt_tokens=sys_tokens)
 
-    async def _auto_compact_if_needed(self, system_prompt: str) -> None:
+    async def _auto_compact_if_needed(self, system_prompt: str | SystemPrompt) -> None:
         """Auto-compact if context usage >= 75%."""
         stats = self.get_context_stats(system_prompt)
         if stats.should_compact:
@@ -308,14 +309,19 @@ class ChatSession:
         self.messages.append({"role": "user", "content": user_input})
         self.session.log_user(user_input)
 
-        # Build messages with system prompt
+        # Build messages with system prompt (split into static + dynamic so
+        # llm.py can mark the static half with Anthropic cache_control).
         system_prompt = await self._get_system_prompt(user_text=user_input)
 
         # Check context usage and auto-compact if needed
         await self._auto_compact_if_needed(system_prompt)
 
+        # Two adjacent system messages signal the split to llm.py. For
+        # providers that don't support prompt caching, llm.py merges them
+        # back into a single plain-string system message.
         full_messages = [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": system_prompt.static},
+            {"role": "system", "content": system_prompt.dynamic},
             *self.messages,
         ]
 
