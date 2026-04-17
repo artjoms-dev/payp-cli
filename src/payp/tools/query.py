@@ -5,20 +5,31 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from payp.prompts.system import _dialect_rules_for
 from payp.tools.base import BaseTool, ToolResult
 
 logger = logging.getLogger(__name__)
 
 
+_BASE_DESCRIPTION = (
+    "Execute a SQL query against the connected database. "
+    "Returns rows, columns, row count, and execution time. "
+    "SELECT queries return data. DDL/DML returns affected row count."
+)
+
+
 class QueryTool(BaseTool):
     name = "execute_sql"
-    description = (
-        "Execute a SQL query against the connected database. "
-        "Returns rows, columns, row count, and execution time. "
-        "SELECT queries return data. DDL/DML returns affected row count."
-    )
     is_read_only = False
     is_destructive = False  # Depends on the actual SQL
+
+    def __init__(self, db_type: str = "postgresql") -> None:
+        self._db_type = db_type
+        self.description = (
+            f"{_BASE_DESCRIPTION}\n\n"
+            f"### {db_type.upper()} SYNTAX RULES — MUST FOLLOW\n"
+            f"{_dialect_rules_for(db_type)}"
+        )
 
     def get_parameters_schema(self) -> dict[str, Any]:
         return {

@@ -153,36 +153,47 @@ def _all_tool_factories() -> list:
 
 def build_base_registry(
     exclude: frozenset[str] | set[str] | None = None,
+    db_type: str = "postgresql",
 ) -> ToolRegistry:
     """Build a tool registry, optionally excluding tools by name.
 
     This is THE single registration point for all payp tools. Both
     `build_cli_registry()` and `build_mcp_registry()` delegate here.
+
+    `db_type` is threaded into tools whose description depends on the
+    active SQL dialect (currently `execute_sql` — see QueryTool).
     """
     reg = ToolRegistry()
     excluded = set(exclude or ())
     for factory in _all_tool_factories():
-        tool = factory()
+        if factory is QueryTool:
+            tool = factory(db_type=db_type)
+        else:
+            tool = factory()
         if tool.name in excluded:
             continue
         reg.register(tool)
     return reg
 
 
-def build_cli_registry() -> ToolRegistry:
+def build_cli_registry(db_type: str = "postgresql") -> ToolRegistry:
     """Registry for the interactive CLI — all tools enabled.
 
     `write_knowledge` is excluded because the CLI uses the
     `propose_knowledge` → user approval → save flow. Direct writes would
     bypass the approval panel.
     """
-    return build_base_registry(exclude=frozenset({"write_knowledge"}))
+    return build_base_registry(
+        exclude=frozenset({"write_knowledge"}),
+        db_type=db_type,
+    )
 
 
 def build_mcp_registry(
     *,
     mode: str = "manual",
     allow_code_exec: bool = False,
+    db_type: str = "postgresql",
 ) -> ToolRegistry:
     """Registry for the MCP stdio server.
 

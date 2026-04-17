@@ -80,8 +80,18 @@ class ChatSession:
         The catalog lives in `payp.tools.registry` — single source of
         truth shared with the MCP server. `write_knowledge` is excluded
         because the CLI uses the propose_knowledge → user approval flow.
+
+        The active `db_type` is passed so `execute_sql`'s description
+        carries the dialect-specific hard rules. Rebuilt on every
+        connection change via `_ensure_chat_session`.
         """
-        return build_cli_registry()
+        db_type = "postgresql"
+        if self.conn is not None:
+            try:
+                db_type = self.conn.profile.db_type.value
+            except AttributeError:
+                db_type = str(self.conn.profile.db_type)
+        return build_cli_registry(db_type=db_type)
 
     def _build_context(self) -> dict[str, Any]:
         """Build context dict passed to tool calls."""
