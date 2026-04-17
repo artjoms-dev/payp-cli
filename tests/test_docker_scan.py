@@ -209,66 +209,44 @@ def test_parse_ps():
 
 # --- list_db_containers integration with subprocess mocked ---
 
-class _FakeProc:
-    def __init__(self, stdout: bytes, returncode: int = 0, hang: bool = False):
-        self._stdout = stdout
-        self.returncode = returncode
-        self._hang = hang
-
-    async def communicate(self):
-        if self._hang:
-            await asyncio.sleep(10)
-        return (self._stdout, b"")
-
-    def kill(self):
-        pass
-
-
-def _make_subprocess(responses: dict[str, _FakeProc]):
-    """Build a fake create_subprocess_exec that dispatches on first arg."""
-    async def fake(*args, **kwargs):  # noqa: ARG001
-        key = args[1] if len(args) > 1 else ""
-        return responses.get(key) or _FakeProc(b"", returncode=1)
+def _make_runner(responses: dict[str, str | None]):
+    """Build a fake _run_docker_sync that dispatches on first arg (ps/inspect)."""
+    def fake(args: list[str], timeout: float):  # noqa: ARG001
+        key = args[0] if args else ""
+        return responses.get(key)
     return fake
 
 
 def test_list_no_docker(monkeypatch):
-    async def boom(*args, **kwargs):
-        raise FileNotFoundError
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", boom)
+    monkeypatch.setattr(
+        docker_scan, "_run_docker_sync", lambda *a, **kw: None,
+    )
     assert asyncio.run(docker_scan.list_db_containers(timeout=0.1)) == []
 
 
 def test_list_daemon_down(monkeypatch):
     monkeypatch.setattr(
-        asyncio, "create_subprocess_exec",
-        _make_subprocess({"ps": _FakeProc(b"", returncode=1)}),
+        docker_scan, "_run_docker_sync", _make_runner({"ps": None}),
     )
     assert asyncio.run(docker_scan.list_db_containers(timeout=0.1)) == []
 
 
 def test_list_ps_timeout(monkeypatch):
     monkeypatch.setattr(
-        asyncio, "create_subprocess_exec",
-        _make_subprocess({"ps": _FakeProc(b"", hang=True)}),
+        docker_scan, "_run_docker_sync", _make_runner({"ps": None}),
     )
     assert asyncio.run(docker_scan.list_db_containers(timeout=0.05)) == []
 
 
 def test_list_returns_postgres(monkeypatch):
-    ps_out = (
-        b'{"ID":"abc","Image":"postgres:15","Names":"pg-dev"}\n'
-    )
+    ps_out = '{"ID":"abc","Image":"postgres:15","Names":"pg-dev"}\n'
     inspect_out = _inspect_json(
         {"POSTGRES_USER": "app", "POSTGRES_PASSWORD": "pw", "POSTGRES_DB": "shop"},
         5433, 5432,
-    ).encode()
+    )
     monkeypatch.setattr(
-        asyncio, "create_subprocess_exec",
-        _make_subprocess({
-            "ps": _FakeProc(ps_out),
-            "inspect": _FakeProc(inspect_out),
-        }),
+        docker_scan, "_run_docker_sync",
+        _make_runner({"ps": ps_out, "inspect": inspect_out}),
     )
     result = asyncio.run(docker_scan.list_db_containers(timeout=1.0))
     assert len(result) == 1
@@ -279,11 +257,10 @@ def test_list_returns_postgres(monkeypatch):
 
 def test_list_filters_non_db(monkeypatch):
     ps_out = (
-        b'{"ID":"abc","Image":"nginx:latest","Names":"web"}\n'
-        b'{"ID":"def","Image":"redis:7","Names":"cache"}\n'
+        '{"ID":"abc","Image":"nginx:latest","Names":"web"}\n'
+        '{"ID":"def","Image":"redis:7","Names":"cache"}\n'
     )
     monkeypatch.setattr(
-        asyncio, "create_subprocess_exec",
-        _make_subprocess({"ps": _FakeProc(ps_out)}),
+        docker_scan, "_run_docker_sync", _make_runner({"ps": ps_out}),
     )
     assert asyncio.run(docker_scan.list_db_containers(timeout=1.0)) == []

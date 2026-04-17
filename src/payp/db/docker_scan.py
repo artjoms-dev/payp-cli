@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 from dataclasses import dataclass
 
 from payp.models import DbType
@@ -160,27 +161,30 @@ _BUILDERS = {
 }
 
 
-async def _run_docker(args: list[str], timeout: float) -> str | None:
-    """Run `docker` with args and return stdout, or None on any failure."""
+def _run_docker_sync(args: list[str], timeout: float) -> str | None:
+    """Synchronous `docker` call. Returns stdout or None on any failure."""
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "docker", *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        result = subprocess.run(
+            ["docker", *args],
+            capture_output=True,
+            timeout=timeout,
+            check=False,
         )
-    except (FileNotFoundError, NotImplementedError, OSError):
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return None
-    try:
-        stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except TimeoutError:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
+    if result.returncode != 0:
         return None
-    if proc.returncode != 0:
-        return None
-    return stdout.decode("utf-8", errors="replace")
+    return result.stdout.decode("utf-8", errors="replace")
+
+
+async def _run_docker(args: list[str], timeout: float) -> str | None:
+    """Run `docker` off the event loop.
+
+    Uses a worker thread + blocking ``subprocess.run`` because payp forces
+    ``WindowsSelectorEventLoopPolicy`` (for psycopg3), and the Selector loop
+    on Windows does not support ``create_subprocess_exec``.
+    """
+    return await asyncio.to_thread(_run_docker_sync, args, timeout)
 
 
 def _parse_ps(raw: str) -> list[tuple[str, str, str]]:

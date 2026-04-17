@@ -74,9 +74,10 @@ def _build_registry() -> dict[str, SlashCommand]:
         "/models": SlashCommand(
             models._cmd_models, "manage AI providers", True,
             subcommands=(
+                ("set executor", "pick the main model"),
+                ("set reviewer", "pick the review model"),
                 ("add", "register a new provider"),
-                ("check", "verify API keys and list available models"),
-                ("balance", "show remaining credit per provider"),
+                ("check", "verify API keys and balance"),
             ),
         ),
         "/mode": SlashCommand(

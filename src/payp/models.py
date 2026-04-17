@@ -56,8 +56,8 @@ class ModelProvider(BaseModel):
 class ModelRoles(BaseModel):
     """Executor and reviewer model assignments."""
 
-    executor: str = "openrouter/google/gemma-4-26b-a4b-it:free"
-    reviewer: str | None = None  # None = no reviewer configured
+    executor: str = "openrouter/anthropic/claude-sonnet-4"
+    reviewer: str | None = None
 
 
 class MemoryConfig(BaseModel):
@@ -71,7 +71,7 @@ class AppConfig(BaseModel):
     """Global payp configuration."""
 
     default_mode: SecurityMode = SecurityMode.MANUAL
-    default_model: str = "openrouter/google/gemma-4-26b-a4b-it:free"
+    default_model: str = "openrouter/anthropic/claude-sonnet-4"
     theme: str = "default"
     roles: ModelRoles = Field(default_factory=ModelRoles)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
