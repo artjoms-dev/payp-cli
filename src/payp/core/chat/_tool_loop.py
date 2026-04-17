@@ -4,7 +4,12 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from payp.ui.streaming import display_tool_call, display_tool_result, stream_response
+from payp.ui.streaming import (
+    display_tool_call,
+    display_tool_result,
+    display_usage_line,
+    stream_response,
+)
 
 from ._tool_io import parse_tool_calls, summarize_tool_response
 
@@ -66,6 +71,8 @@ async def run_tool_loop(
                     }
                 )
                 continue  # retry the loop
+            # Show per-turn usage stats
+            _show_usage(session)
             break
 
         # Process tool calls
@@ -197,3 +204,21 @@ async def run_tool_loop(
         )
 
     # Done
+
+
+def _show_usage(session: ChatSession) -> None:
+    """Print a right-aligned dim line with per-turn tokens, cost, context %."""
+    llm = session.llm
+    ctx_pct: float | None = None
+    try:
+        stats = session.get_context_stats()
+        ctx_pct = stats.usage_ratio * 100
+    except Exception:
+        pass
+    display_usage_line(
+        session.console,
+        llm.last_input_tokens,
+        llm.last_output_tokens,
+        llm.last_cost,
+        context_pct=ctx_pct,
+    )

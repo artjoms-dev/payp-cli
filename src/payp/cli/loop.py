@@ -119,6 +119,20 @@ def _log_memory_backend_to_session(backend_name: str) -> None:
         pass
 
 
+def _build_prompt():  # -> FormattedText
+    """Build formatted prompt showing connected DB name in green."""
+    from prompt_toolkit.formatted_text import FormattedText
+
+    db = _state.get("active_connection")
+    if db:
+        return FormattedText([
+            ("", "payp "),
+            ("class:db", f"({db})"),
+            ("", " > "),
+        ])
+    return FormattedText([("", "payp> ")])
+
+
 def _interactive_loop() -> None:
     """Main interactive chat loop with LLM integration."""
     from prompt_toolkit import PromptSession
@@ -139,6 +153,7 @@ def _interactive_loop() -> None:
             "completion-menu.completion.current": "noinherit underline",
             "completion-menu.meta.completion": "noinherit #888888",
             "completion-menu.meta.completion.current": "noinherit #888888 underline",
+            "db": "#B4E04C",
         }),
     )
 
@@ -147,7 +162,7 @@ def _interactive_loop() -> None:
 
     while True:
         try:
-            user_input = session.prompt("payp> ").strip()
+            user_input = session.prompt(_build_prompt()).strip()
         except (EOFError, KeyboardInterrupt):
             _stop_banner_animator()
             console.print("\n[dim]Goodbye![/dim]")

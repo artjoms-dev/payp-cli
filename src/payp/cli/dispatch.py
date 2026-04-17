@@ -27,12 +27,17 @@ class SlashCommand:
     Triggers may contain spaces (e.g. `"scan docker"`) - the completer
     replaces the entire arg text, so multi-token subcommands autocomplete
     in one tab.
+
+    `dynamic_subcommands` is an optional callable that returns additional
+    (trigger, meta) pairs at completion time - useful for data that changes
+    between invocations (e.g. saved database connections).
     """
 
     handler: Callable[[str], None]
     help: str
     takes_args: bool
     subcommands: tuple[tuple[str, str], ...] = ()
+    dynamic_subcommands: Callable[[], tuple[tuple[str, str], ...]] | None = None
 
 
 def _wrap(fn: Callable[[], None]) -> Callable[[str], None]:
@@ -49,6 +54,7 @@ def _build_registry() -> dict[str, SlashCommand]:
         context,
         db,
         diff,
+        erd,
         export,
         history,
         knowledge,
@@ -69,6 +75,7 @@ def _build_registry() -> dict[str, SlashCommand]:
             subcommands=(
                 ("scan docker", "auto-detect running DB containers"),
             ),
+            dynamic_subcommands=db._db_connection_completions,
         ),
         "/credentials": SlashCommand(db._cmd_credentials, "edit saved credentials", True),
         "/models": SlashCommand(
@@ -97,6 +104,7 @@ def _build_registry() -> dict[str, SlashCommand]:
             ),
         ),
         "/stats": SlashCommand(schema._cmd_stats, "column statistics & data profile", True),
+        "/erd": SlashCommand(erd._cmd_erd, "visual ERD in browser (zero tokens)", False),
         "/knowledge": SlashCommand(
             knowledge._cmd_knowledge, "business context & notes", True,
             subcommands=(
@@ -213,7 +221,7 @@ def _slash_completer() -> Any:
                 # press space before the hints appear. Selecting one of
                 # these rewrites the line to `"/cmd trigger"` in one tab.
                 entry = registry.get(text.lower())
-                if entry is not None and entry.subcommands:
+                if entry is not None:
                     for trigger, meta in entry.subcommands:
                         full = f"{text} {trigger}"
                         yield Completion(
@@ -222,12 +230,21 @@ def _slash_completer() -> Any:
                             display=full,
                             display_meta=meta,
                         )
+                    if entry.dynamic_subcommands is not None:
+                        for trigger, meta in entry.dynamic_subcommands():
+                            full = f"{text} {trigger}"
+                            yield Completion(
+                                full,
+                                start_position=-len(text),
+                                display=full,
+                                display_meta=meta,
+                            )
                 return
 
             # Space typed -> complete subcommands for the entered command.
             cmd_name, _, arg_text = text.partition(" ")
             entry = registry.get(cmd_name.lower())
-            if entry is None or not entry.subcommands:
+            if entry is None:
                 return
             arg_lower = arg_text.lower()
             for trigger, meta in entry.subcommands:
@@ -238,5 +255,14 @@ def _slash_completer() -> Any:
                         display=trigger,
                         display_meta=meta,
                     )
+            if entry.dynamic_subcommands is not None:
+                for trigger, meta in entry.dynamic_subcommands():
+                    if trigger.lower().startswith(arg_lower):
+                        yield Completion(
+                            trigger,
+                            start_position=-len(arg_text),
+                            display=trigger,
+                            display_meta=meta,
+                        )
 
     return SlashCompleter()

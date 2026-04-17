@@ -19,6 +19,25 @@ if TYPE_CHECKING:
     from payp.db.docker_scan import DetectedDb
 
 
+def _db_connection_completions() -> tuple[tuple[str, str], ...]:
+    """Return saved connections as (name, meta) pairs for autocomplete."""
+    from payp.config import list_connections, load_connection_profile
+
+    connections = list_connections()
+    if not connections:
+        return ()
+    result: list[tuple[str, str]] = []
+    for i, name in enumerate(connections, 1):
+        profile = load_connection_profile(name)
+        if profile:
+            p = profile
+            meta = f"[{i}] {p.db_type.value} @ {p.host}:{p.port}/{p.database}"
+        else:
+            meta = f"[{i}] saved connection"
+        result.append((name, meta))
+    return tuple(result)
+
+
 def _cmd_db(args: str) -> None:
     """Manage database connections."""
     from rich.table import Table
