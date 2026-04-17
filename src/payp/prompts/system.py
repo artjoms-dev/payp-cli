@@ -414,17 +414,12 @@ def build_system_prompt(
     # 3. Security mode
     sections.append(SECURITY_MODES.get(mode, SECURITY_MODES[SecurityMode.MANUAL]))
 
-    # 4. Connection context with STRONG dialect-specific rules
+    # 4. Connection context — dialect hard rules live in execute_sql's
+    # tool description (see payp.tools.query.QueryTool), not here.
     if connection_name and db_version:
-        dialect_rules = _dialect_rules_for(db_type)
         conn_section = f"""\
 ## Active Connection: {connection_name} ({db_version})
-Database dialect: {db_type.upper()}
-
-### CRITICAL — {db_type.upper()} SQL SYNTAX RULES
-{dialect_rules}
-
-You MUST use {db_type.upper()}-specific syntax. If you use the wrong dialect, queries WILL fail."""
+Database dialect: {db_type.upper()}"""
         sections.append(conn_section)
     else:
         sections.append("""\
@@ -519,29 +514,18 @@ Do not guess or pretend you can access data.""")
 
     # 7. Tools are added separately via tool definitions, not in prompt text
 
-    # 7b. Available Skills (one-liners only — full body fetched via invoke_skill)
+    # 7b. Available Skills — pointer only (full list fetched via list_skills)
     if skills:
-        skill_lines = [
-            "## Available Skills",
-            "Skills are pre-defined workflows for common database tasks. "
-            "When the user's request matches a skill's `when_to_use`, call the "
-            "`invoke_skill` tool with the skill's name to load its full workflow, "
-            "then follow the returned instructions using your normal tools.",
-            "",
-        ]
-        for s in skills:
-            name = getattr(s, "name", "")
-            desc = getattr(s, "description", "")
-            when = getattr(s, "when_to_use", "")
-            skill_lines.append(f"- **{name}** — {desc}")
-            skill_lines.append(f"    when_to_use: {when}")
-        skill_lines.append("")
-        skill_lines.append(
-            "Call `list_skills` to browse all skills, or `invoke_skill(skill_name=..., "
-            "user_context=...)` to activate one. Skills return text instructions — "
-            "they do NOT bypass security modes."
+        sections.append(
+            "## Available Skills\n"
+            "Pre-defined workflows exist for common database tasks "
+            "(schema audits, migrations, ETL checks, and more). "
+            "Call `list_skills` to see what's available and what each one is for; "
+            "call `invoke_skill(skill_name=..., user_context=...)` to load a specific "
+            "one. Do this whenever the user's request sounds procedural or resembles "
+            "a recurring operation. Skills return text instructions — they do NOT "
+            "bypass security modes."
         )
-        sections.append("\n".join(skill_lines))
 
     # 7c. Advanced tools (names only — LLM can request full definitions)
     if advanced_tool_names:
