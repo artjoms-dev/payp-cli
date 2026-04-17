@@ -14,12 +14,60 @@ Assembles 7 sections based on current state:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 from payp.models import SchemaCatalog, SchemaGraph, SchemaIndex, SecurityMode
+
+
+@dataclass
+class SystemPrompt:
+    """System prompt split into a static prefix and a dynamic suffix.
+
+    The static prefix is byte-identical across turns of a session and is
+    what Anthropic prompt caching marks with ``cache_control``. The
+    dynamic suffix changes per turn (active connection, schema context,
+    knowledge, skills).
+
+    Behaves like a string via ``__str__`` / ``__contains__`` so existing
+    call sites and tests that do ``"foo" in prompt`` keep working.
+    """
+
+    static: str
+    dynamic: str
+
+    def __str__(self) -> str:
+        if self.dynamic:
+            return f"{self.static}\n\n{self.dynamic}"
+        return self.static
+
+    def __contains__(self, item: object) -> bool:
+        return isinstance(item, str) and item in str(self)
+
+    def __bool__(self) -> bool:
+        return bool(self.static) or bool(self.dynamic)
+
+    def find(self, sub: str) -> int:
+        return str(self).find(sub)
+
+    def lower(self) -> str:
+        return str(self).lower()
+
+    def upper(self) -> str:
+        return str(self).upper()
+
+    def split(self, *args: Any, **kwargs: Any) -> list[str]:
+        return str(self).split(*args, **kwargs)
+
+    def __len__(self) -> int:
+        return len(str(self))
+
+    @property
+    def combined(self) -> str:
+        return str(self)
 
 # Forward reference to avoid circular import at module load
 if False:  # TYPE_CHECKING-equivalent without importing typing
@@ -400,29 +448,42 @@ def build_system_prompt(
     skills: list[Any] | None = None,
     schema_budget: int = 10000,
     advanced_tool_names: list[str] | None = None,
-) -> str:
-    """Assemble the full system prompt from all sections."""
-    sections = []
+) -> SystemPrompt:
+    """Assemble the system prompt, split into static prefix + dynamic suffix.
+
+    Static bucket (byte-identical across turns, eligible for Anthropic
+    prompt caching): identity, capabilities, tool-output isolation, the
+    security-mode copy for the current mode, and error recovery.
+    Dialect hard rules live in execute_sql's tool description (see
+    payp.tools.query.QueryTool) — they would otherwise belong to the
+    static bucket too.
+
+    Dynamic bucket (changes per turn): active connection header,
+    multi-conn list, schema context (T0/T1/FK/T2), knowledge base,
+    skills, and advanced-tool pointers.
+    """
+    static_sections: list[str] = []
+    dynamic_sections: list[str] = []
 
     # 1. Identity
-    sections.append(IDENTITY)
+    static_sections.append(IDENTITY)
 
     # 2. Capabilities
-    sections.append(CAPABILITIES)
-    sections.append(TOOL_OUTPUT_ISOLATION)
+    static_sections.append(CAPABILITIES)
+    static_sections.append(TOOL_OUTPUT_ISOLATION)
 
     # 3. Security mode
-    sections.append(SECURITY_MODES.get(mode, SECURITY_MODES[SecurityMode.MANUAL]))
+    static_sections.append(SECURITY_MODES.get(mode, SECURITY_MODES[SecurityMode.MANUAL]))
 
     # 4. Connection context — dialect hard rules live in execute_sql's
     # tool description (see payp.tools.query.QueryTool), not here.
     if connection_name and db_version:
-        conn_section = f"""\
-## Active Connection: {connection_name} ({db_version})
-Database dialect: {db_type.upper()}"""
-        sections.append(conn_section)
+        dynamic_sections.append(
+            f"## Active Connection: {connection_name} ({db_version})\n"
+            f"Database dialect: {db_type.upper()}"
+        )
     else:
-        sections.append("""\
+        dynamic_sections.append("""\
 ## No Active Connection
 You are NOT connected to any database. If the user asks about data, tables, or \
 wants to run queries, tell them clearly: "No database connected. Run /db to connect." \
@@ -430,7 +491,7 @@ Do not guess or pretend you can access data.""")
 
     # 4b. Active Connections list + Dialect Syntax Guide (when multi-DB)
     if active_connections and len(active_connections) > 1:
-        sections.append(_build_active_connections_section(active_connections))
+        dynamic_sections.append(_build_active_connections_section(active_connections))
 
     # 5. Schema context — budget-aware injection
     if t0 or t1:
@@ -490,7 +551,7 @@ Do not guess or pretend you can access data.""")
                 "\n**The DDL and knowledge above are authoritative.** "
                 "Only call schema_lookup or read_knowledge for tables NOT shown above."
             )
-        sections.append("\n".join(schema_parts))
+        dynamic_sections.append("\n".join(schema_parts))
 
     # 6. Knowledge base — project-local (./payp/knowledge/) takes precedence over global
     from payp.config import project_knowledge_dir
@@ -510,13 +571,13 @@ Do not guess or pretend you can access data.""")
                 except Exception as e:
                     logger.debug("Prompt section generation failed: %s", e)
     if len(knowledge_parts) > 1:
-        sections.append("\n".join(knowledge_parts))
+        dynamic_sections.append("\n".join(knowledge_parts))
 
     # 7. Tools are added separately via tool definitions, not in prompt text
 
     # 7b. Available Skills — pointer only (full list fetched via list_skills)
     if skills:
-        sections.append(
+        dynamic_sections.append(
             "## Available Skills\n"
             "Pre-defined workflows exist for common database tasks "
             "(schema audits, migrations, ETL checks, and more). "
@@ -529,14 +590,17 @@ Do not guess or pretend you can access data.""")
 
     # 7c. Advanced tools (names only — LLM can request full definitions)
     if advanced_tool_names:
-        sections.append(
+        dynamic_sections.append(
             "## Additional Tools\n"
             "These tools are available but not loaded by default. "
             "Mention the tool name in your response and it will be activated for the next turn:\n"
             + ", ".join(advanced_tool_names)
         )
 
-    # 8. Error recovery
-    sections.append(ERROR_RECOVERY)
+    # 8. Error recovery (static)
+    static_sections.append(ERROR_RECOVERY)
 
-    return "\n\n".join(sections)
+    return SystemPrompt(
+        static="\n\n".join(static_sections),
+        dynamic="\n\n".join(dynamic_sections),
+    )

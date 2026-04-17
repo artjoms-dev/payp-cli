@@ -24,6 +24,83 @@ logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
 logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
 
+logger = logging.getLogger(__name__)
+
+
+def _supports_prompt_caching(model: str) -> bool:
+    """Anthropic-capable routes where litellm forwards ``cache_control``."""
+    m = model.lower()
+    if m.startswith("anthropic/") or m.startswith("openrouter/anthropic/"):
+        return True
+    if m.startswith("azure_ai/") and "anthropic" in m:
+        return True
+    return "claude" in m
+
+
+def _prepare_messages(
+    messages: list[dict[str, Any]], model: str
+) -> list[dict[str, Any]]:
+    """Collapse our two adjacent system messages into the right shape.
+
+    ``_facade.py`` passes the system prompt as two back-to-back system
+    messages (static, dynamic). For Anthropic-capable models we rewrap
+    them as a single system message whose content is a list of two text
+    blocks, with ``cache_control`` on the static block. For every other
+    provider we concatenate them back into a plain string so we don't
+    trip OpenAI/Gemini schema validation.
+    """
+    if (
+        len(messages) >= 2
+        and messages[0].get("role") == "system"
+        and messages[1].get("role") == "system"
+        and isinstance(messages[0].get("content"), str)
+        and isinstance(messages[1].get("content"), str)
+    ):
+        static = messages[0]["content"]
+        dynamic = messages[1]["content"]
+        rest = messages[2:]
+
+        if _supports_prompt_caching(model) and static:
+            blocks: list[dict[str, Any]] = [
+                {
+                    "type": "text",
+                    "text": static,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+            if dynamic:
+                blocks.append({"type": "text", "text": dynamic})
+            return [{"role": "system", "content": blocks}, *rest]
+
+        merged = f"{static}\n\n{dynamic}" if dynamic else static
+        return [{"role": "system", "content": merged}, *rest]
+
+    return messages
+
+
+def _log_cache_usage(usage: Any, model: str) -> None:
+    """DEBUG-log Anthropic cache counters if litellm surfaced them."""
+    if usage is None:
+        return
+    cache_read = getattr(usage, "cache_read_input_tokens", None)
+    cache_creation = getattr(usage, "cache_creation_input_tokens", None)
+    if cache_read is None and cache_creation is None:
+        as_dict = getattr(usage, "model_dump", None)
+        if callable(as_dict):
+            try:
+                d = as_dict()
+            except Exception:
+                d = {}
+            cache_read = d.get("cache_read_input_tokens")
+            cache_creation = d.get("cache_creation_input_tokens")
+    if cache_read or cache_creation:
+        logger.debug(
+            "prompt-cache model=%s cache_read=%s cache_creation=%s",
+            model,
+            cache_read,
+            cache_creation,
+        )
+
 
 @dataclass
 class ToolDefinition:
@@ -153,7 +230,7 @@ class LLMClient:
 
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": _prepare_messages(messages, model),
             "stream": False,
             **extra_kwargs,
         }
@@ -184,6 +261,7 @@ class LLMClient:
         usage = response.usage
         input_tokens = usage.prompt_tokens if usage else 0
         output_tokens = usage.completion_tokens if usage else 0
+        _log_cache_usage(usage, model)
 
         # Cost from litellm
         cost = 0.0
@@ -215,7 +293,7 @@ class LLMClient:
 
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": _prepare_messages(messages, model),
             "stream": True,
             "stream_options": {"include_usage": True},
             **extra_kwargs,
@@ -260,6 +338,7 @@ class LLMClient:
             if hasattr(chunk, "usage") and chunk.usage:
                 input_tokens = chunk.usage.prompt_tokens or 0
                 output_tokens = chunk.usage.completion_tokens or 0
+                _log_cache_usage(chunk.usage, model)
 
             yield StreamChunk(
                 content=content,
