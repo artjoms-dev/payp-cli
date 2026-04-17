@@ -5,6 +5,7 @@ Accent colors: #A8006F (magenta-pink) -> #B4E04C (lime green).
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from io import StringIO
@@ -207,6 +208,22 @@ def _gradient_2d(
     return result
 
 
+def _supports_truecolor(console: Console) -> bool:
+    """Whether the active terminal can render 24-bit color escapes.
+
+    macOS Terminal.app and other 256-color-only emulators parse each numeric
+    component of `\\e[38;2;r;g;bm` as its own SGR command, producing the
+    rainbow-block garbage you see when a truecolor gradient hits them. When
+    this returns False, the animator stays off and the static dashboard's
+    auto-downgraded 256-color gradient is left in place as the fallback.
+    """
+    if os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit"):
+        return True
+    if os.environ.get("TERM_PROGRAM") == "Apple_Terminal":
+        return False
+    return console.color_system == "truecolor"
+
+
 def _build_frame_console(width: int) -> tuple[Console, StringIO]:
     """Build a Rich console that writes into a StringIO buffer.
 
@@ -274,6 +291,8 @@ class BannerAnimator:
             or self.console.is_dumb_terminal
             or self.console.color_system is None
         ):
+            return False
+        if not _supports_truecolor(self.console):
             return False
         try:
             size = self.console.size
@@ -368,7 +387,11 @@ def render_status_dashboard(
     the REPL waits for input.
     """
     lines = pick_banner_for_console(console)
-    console.print(_gradient_2d(lines), highlight=False)
+    # On 256-color terminals (Terminal.app et al.) the animator stays off, so
+    # drop the colored backdrop too — otherwise the dim-bg cells quantize into
+    # visible blocky stripes instead of reading as a filled banner.
+    static_backdrop = _BANNER_BACKDROP if _supports_truecolor(console) else 0.0
+    console.print(_gradient_2d(lines, backdrop=static_backdrop), highlight=False)
 
     tagline = Text()
     tagline.append(f"v{version}", style="dim")
