@@ -6,6 +6,7 @@ Handles streaming, tool calling, and cost tracking.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -19,6 +20,86 @@ from payp.models import CostTracker
 # Suppress litellm's verbose logging
 litellm.suppress_debug_info = True
 litellm.set_verbose = False
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
+
+
+def _supports_prompt_caching(model: str) -> bool:
+    """Anthropic-capable routes where litellm forwards ``cache_control``."""
+    m = model.lower()
+    if m.startswith("anthropic/") or m.startswith("openrouter/anthropic/"):
+        return True
+    if m.startswith("azure_ai/") and "anthropic" in m:
+        return True
+    return "claude" in m
+
+
+def _prepare_messages(
+    messages: list[dict[str, Any]], model: str
+) -> list[dict[str, Any]]:
+    """Collapse our two adjacent system messages into the right shape.
+
+    ``_facade.py`` passes the system prompt as two back-to-back system
+    messages (static, dynamic). For Anthropic-capable models we rewrap
+    them as a single system message whose content is a list of two text
+    blocks, with ``cache_control`` on the static block. For every other
+    provider we concatenate them back into a plain string so we don't
+    trip OpenAI/Gemini schema validation.
+    """
+    if (
+        len(messages) >= 2
+        and messages[0].get("role") == "system"
+        and messages[1].get("role") == "system"
+        and isinstance(messages[0].get("content"), str)
+        and isinstance(messages[1].get("content"), str)
+    ):
+        static = messages[0]["content"]
+        dynamic = messages[1]["content"]
+        rest = messages[2:]
+
+        if _supports_prompt_caching(model) and static:
+            blocks: list[dict[str, Any]] = [
+                {
+                    "type": "text",
+                    "text": static,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+            if dynamic:
+                blocks.append({"type": "text", "text": dynamic})
+            return [{"role": "system", "content": blocks}, *rest]
+
+        merged = f"{static}\n\n{dynamic}" if dynamic else static
+        return [{"role": "system", "content": merged}, *rest]
+
+    return messages
+
+
+def _log_cache_usage(usage: Any, model: str) -> None:
+    """DEBUG-log Anthropic cache counters if litellm surfaced them."""
+    if usage is None:
+        return
+    cache_read = getattr(usage, "cache_read_input_tokens", None)
+    cache_creation = getattr(usage, "cache_creation_input_tokens", None)
+    if cache_read is None and cache_creation is None:
+        as_dict = getattr(usage, "model_dump", None)
+        if callable(as_dict):
+            try:
+                d = as_dict()
+            except Exception:
+                d = {}
+            cache_read = d.get("cache_read_input_tokens")
+            cache_creation = d.get("cache_creation_input_tokens")
+    if cache_read or cache_creation:
+        logger.debug(
+            "prompt-cache model=%s cache_read=%s cache_creation=%s",
+            model,
+            cache_read,
+            cache_creation,
+        )
 
 
 @dataclass
@@ -65,6 +146,10 @@ class LLMClient:
 
     def __init__(self) -> None:
         self.cost_tracker = CostTracker()
+        # Per-request usage (reset on every _track_cost call)
+        self.last_input_tokens: int = 0
+        self.last_output_tokens: int = 0
+        self.last_cost: float = 0.0
         self._configure_providers()
 
     def _configure_providers(self) -> None:
@@ -80,6 +165,42 @@ class LLMClient:
                 os.environ["OPENAI_API_KEY"] = provider.api_key
             elif name == "gemini":
                 os.environ["GEMINI_API_KEY"] = provider.api_key
+
+    def _resolve_model(self, model: str) -> tuple[str, dict[str, Any]]:
+        """Parse provider/model and return litellm-ready model + extra kwargs."""
+        providers = load_models_config()
+        extra_kwargs: dict[str, Any] = {}
+
+        if "/" in model:
+            provider_name, actual_model = model.split("/", 1)
+        else:
+            provider_name, actual_model = "", model
+
+        provider = providers.get(provider_name) if provider_name else None
+
+        if provider_name.startswith("azure") and provider:
+            # Detect Anthropic-on-Azure (Azure AI Foundry) vs Azure OpenAI.
+            # litellm uses azure_ai/ for non-OpenAI models (Claude, Mistral, etc.)
+            # and azure/ for native Azure OpenAI deployments.
+            is_azure_ai = provider.base_url and "/anthropic" in provider.base_url
+            prefix = "azure_ai" if is_azure_ai else "azure"
+            model = f"{prefix}/{actual_model}"
+            extra_kwargs["api_key"] = provider.api_key
+            if provider.base_url:
+                extra_kwargs["api_base"] = provider.base_url
+            if provider.api_version:
+                extra_kwargs["api_version"] = provider.api_version
+        elif provider_name == "ollama" and provider:
+            model = f"ollama/{actual_model}"
+            if provider.base_url:
+                extra_kwargs["api_base"] = provider.base_url
+        elif provider_name == "anthropic" and provider:
+            model = f"anthropic/{actual_model}"
+            extra_kwargs["api_key"] = provider.api_key
+            if provider.base_url:
+                extra_kwargs["api_base"] = provider.base_url
+
+        return model, extra_kwargs
 
     def get_executor_model(self) -> str:
         """Get the configured executor model name."""
@@ -105,11 +226,13 @@ class LLMClient:
         the reviewer to get structured JSON output via a JSON schema.
         """
         model = model or self.get_executor_model()
+        model, extra_kwargs = self._resolve_model(model)
 
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": _prepare_messages(messages, model),
             "stream": False,
+            **extra_kwargs,
         }
 
         if tools:
@@ -138,6 +261,7 @@ class LLMClient:
         usage = response.usage
         input_tokens = usage.prompt_tokens if usage else 0
         output_tokens = usage.completion_tokens if usage else 0
+        _log_cache_usage(usage, model)
 
         # Cost from litellm
         cost = 0.0
@@ -165,12 +289,14 @@ class LLMClient:
     ) -> AsyncIterator[StreamChunk]:
         """Send a streaming chat completion request. Yields chunks."""
         model = model or self.get_executor_model()
+        model, extra_kwargs = self._resolve_model(model)
 
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": _prepare_messages(messages, model),
             "stream": True,
             "stream_options": {"include_usage": True},
+            **extra_kwargs,
         }
 
         if tools:
@@ -212,6 +338,7 @@ class LLMClient:
             if hasattr(chunk, "usage") and chunk.usage:
                 input_tokens = chunk.usage.prompt_tokens or 0
                 output_tokens = chunk.usage.completion_tokens or 0
+                _log_cache_usage(chunk.usage, model)
 
             yield StreamChunk(
                 content=content,
@@ -245,11 +372,29 @@ class LLMClient:
         self._track_cost(input_tokens, output_tokens, cost)
 
     def _track_cost(self, input_tokens: int, output_tokens: int, cost: float) -> None:
-        """Accumulate cost tracking."""
+        """Accumulate cost tracking and store per-request snapshot."""
+        self.last_input_tokens = input_tokens
+        self.last_output_tokens = output_tokens
+        self.last_cost = cost
         self.cost_tracker.total_input_tokens += input_tokens
         self.cost_tracker.total_output_tokens += output_tokens
         self.cost_tracker.total_cost_usd += cost
         self.cost_tracker.query_count += 1
+        self.cost_tracker.last_input_tokens = input_tokens
+
+    def check_cost_limit(self) -> tuple[bool, str]:
+        """Check if session cost limit is exceeded. Returns (exceeded, message)."""
+        from payp.config import load_config
+        config = load_config()
+        if config.max_session_cost_usd is None:
+            return False, ""
+        current = self.cost_tracker.total_cost_usd
+        limit = config.max_session_cost_usd
+        if current >= limit:
+            return True, f"Session cost ${current:.4f} has reached the limit of ${limit:.2f}. Run /cost to see details."
+        if current >= limit * 0.8:
+            return False, f"\u26a0 Session cost ${current:.4f} is at {current/limit*100:.0f}% of ${limit:.2f} limit."
+        return False, ""
 
     def get_cost_summary(self) -> dict[str, Any]:
         """Return current cost tracking summary."""

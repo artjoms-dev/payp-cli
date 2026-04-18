@@ -1,36 +1,142 @@
-"""Status dashboard — welcome screen using Rich only.
+"""Status dashboard - welcome screen using Rich only.
 
-Accent colors: #A8006F (magenta-pink) → #B4E04C (lime green).
+Accent colors: #A8006F (magenta-pink) -> #B4E04C (lime green).
 """
 
 from __future__ import annotations
 
+import os
+import threading
 import time
+from io import StringIO
 
+import pyfiglet
 from rich import box
 from rich.color import Color as RichColor
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, TextColumn
 from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
-# ── Accent palette ──────────────────────────────────────────────────────
-C1 = (168, 0, 111)   # #A8006F
-C2 = (180, 224, 76)   # #B4E04C
+C1 = (168, 0, 111)
+C2 = (180, 224, 76)
+
+_BANNER_FONT = "doh"
+_BANNER_TEXT = "payp"
+_BANNER_RENDER_WIDTH = 80
+_BANNER_BACKDROP = 0.20
+
+# sRGB-ish gamma for blending; 2.2 keeps magenta-to-lime midtones from going muddy brown.
+_GAMMA = 2.2
+
+# Ordered fallback chain when the configured font would overflow the viewport.
+# doh is 50 rows tall; on a standard terminal it would scroll off-screen and
+# break the animator's cursor-up math (line wrapping emits no newlines).
+_BANNER_FALLBACKS: tuple[str, ...] = (
+    "univers",
+    "ansi_regular",
+    "ansi_shadow",
+    "standard",
+    "small",
+)
+
+
+def _render_banner_lines(text: str = "payp", font: str = _BANNER_FONT) -> list[str]:
+    """Render ASCII banner via pyfiglet with leading / trailing blank rows trimmed."""
+    try:
+        raw = pyfiglet.figlet_format(text, font=font, width=_BANNER_RENDER_WIDTH)
+    except pyfiglet.FontNotFound:
+        raw = pyfiglet.figlet_format(text, font="standard", width=_BANNER_RENDER_WIDTH)
+    lines = [line.rstrip() for line in raw.rstrip("\n").split("\n")]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines or [text]
+
+
+def _fits_viewport(lines: list[str], max_w: int, max_h: int) -> bool:
+    if not lines:
+        return False
+    return (
+        len(lines) <= max_h
+        and max(len(l) for l in lines) <= max_w
+    )
+
+
+def pick_banner_for_console(
+    console: Console, text: str = _BANNER_TEXT
+) -> list[str]:
+    """Return the widest banner that fits the current terminal.
+
+    Tries `_BANNER_FONT` first, then walks `_BANNER_FALLBACKS` until it
+    finds one that fits within the console width and a third of the height.
+    A too-tall or too-wide banner would wrap in the terminal; since line
+    wrapping doesn't emit `\\n`, the row counter and animator cursor-up
+    math would both be off, producing a broken staircase effect.
+    """
+    try:
+        max_w = console.size.width
+        max_h = max(console.size.height // 3, 4)
+    except Exception:
+        max_w, max_h = 80, 10
+    # Dedup preserving order so the configured font is tried first.
+    seen: set[str] = set()
+    for font in (_BANNER_FONT, *_BANNER_FALLBACKS):
+        if font in seen:
+            continue
+        seen.add(font)
+        try:
+            lines = _render_banner_lines(text, font=font)
+        except Exception:
+            continue
+        if _fits_viewport(lines, max_w, max_h):
+            return lines
+    return [text]
 
 
 def _lerp(c1: tuple, c2: tuple, t: float) -> tuple:
-    return (
-        int(c1[0] + (c2[0] - c1[0]) * t),
-        int(c1[1] + (c2[1] - c1[1]) * t),
-        int(c1[2] + (c2[2] - c1[2]) * t),
-    )
+    # Linear-RGB interpolation, encoded back to sRGB so mid-tones don't go muddy.
+    def _blend(a: int, b: int) -> int:
+        la = (a / 255.0) ** _GAMMA
+        lb = (b / 255.0) ** _GAMMA
+        mixed = la + (lb - la) * t
+        return max(0, min(255, int(round(mixed ** (1.0 / _GAMMA) * 255))))
+    return _blend(c1[0], c2[0]), _blend(c1[1], c2[1]), _blend(c1[2], c2[2])
 
 
 def _rgb(r: int, g: int, b: int) -> Style:
     return Style(color=RichColor.from_rgb(r, g, b))
+
+
+def _rgb_bg(fg: tuple[int, int, int], backdrop: float) -> Style:
+    r, g, b = fg
+    br, bg, bb = int(r * backdrop), int(g * backdrop), int(b * backdrop)
+    return Style(
+        color=RichColor.from_rgb(r, g, b),
+        bgcolor=RichColor.from_rgb(br, bg, bb),
+    )
+
+
+# Precomputed gradient palette so per-cell animation avoids a gamma-corrected
+# lerp + two Style allocations every frame.
+_LUT_SIZE = 256
+_FG_LUT: list[Style] = []
+_BG_LUT: list[Style] = []
+
+
+def _build_palette_lut() -> None:
+    _FG_LUT.clear()
+    _BG_LUT.clear()
+    last = _LUT_SIZE - 1
+    for i in range(_LUT_SIZE):
+        fg = _lerp(C1, C2, i / last)
+        _FG_LUT.append(_rgb(*fg))
+        _BG_LUT.append(_rgb_bg(fg, _BANNER_BACKDROP))
+
+
+_build_palette_lut()
 
 
 def _gradient(s: str, c1: tuple = C1, c2: tuple = C2) -> Text:
@@ -46,63 +152,222 @@ def _gradient(s: str, c1: tuple = C1, c2: tuple = C2) -> Text:
     return t
 
 
-def _gradient_2d(lines: list[str], c1: tuple = C1, c2: tuple = C2) -> Text:
-    """Per-character diagonal gradient — each cell right or down shifts color equally."""
+def _triangle(x: float) -> float:
+    x = x - int(x)
+    return 1.0 - abs(2.0 * x - 1.0)
+
+
+def _gradient_2d(
+    lines: list[str],
+    c1: tuple = C1,
+    c2: tuple = C2,
+    phase: float = 0.0,
+    backdrop: float | None = None,
+) -> Text:
+    """Diagonal gradient with optional phase shift and colored backdrop.
+
+    phase == 0 renders the static rest frame (top-left C1, bottom-right C2).
+    Non-zero phase slides a triangle-wave gradient along the diagonal so
+    animation sweeps are seamless and loop back to phase 0 without a seam.
+    `backdrop` is the dim-bg intensity (0.0-1.0); `None` uses the module default.
+    """
+    if backdrop is None:
+        backdrop = _BANNER_BACKDROP
+    use_bg = backdrop > 0.0
+
+    # Default palette and backdrop hit the precomputed LUT path, skipping per-cell Style allocation.
+    use_lut = c1 is C1 and c2 is C2 and (not use_bg or backdrop == _BANNER_BACKDROP)
+    lut = _BG_LUT if use_bg else _FG_LUT
+    lut_last = _LUT_SIZE - 1
+
     result = Text()
-    max_cols = max(len(l) for l in lines)
-    max_rows = len(lines)
-    # Diagonal distance: top-left (0,0) = 0, bottom-right = max_cols + max_rows
+    max_cols = max((len(l) for l in lines), default=1)
+    max_rows = max(len(lines), 1)
     max_diag = max((max_cols - 1) + (max_rows - 1), 1)
+    period = 2 * max_diag
     for row_i, line in enumerate(lines):
-        for col_i, ch in enumerate(line):
-            if ch == " ":
-                result.append(ch)
+        padded = line.ljust(max_cols) if use_bg else line
+        for col_i, ch in enumerate(padded):
+            x = (col_i + row_i + phase * max_diag) / period
+            t = _triangle(x)
+            if use_lut:
+                if use_bg or ch != " ":
+                    result.append(ch, style=lut[int(t * lut_last)])
+                else:
+                    result.append(ch)
             else:
-                t = (col_i + row_i) / max_diag
-                r, g, b = _lerp(c1, c2, t)
-                result.append(ch, style=_rgb(r, g, b))
+                fg = _lerp(c1, c2, t)
+                if use_bg:
+                    result.append(ch, style=_rgb_bg(fg, backdrop))
+                elif ch == " ":
+                    result.append(ch)
+                else:
+                    result.append(ch, style=_rgb(*fg))
         if row_i < len(lines) - 1:
             result.append("\n")
     return result
 
 
-# ── Banner ──────────────────────────────────────────────────────────────
-BANNER = [
-    "██████╗  █████╗ ██╗   ██╗██████╗ ",
-    "██╔══██╗██╔══██╗╚██╗ ██╔╝██╔══██╗",
-    "██████╔╝███████║ ╚████╔╝ ██████╔╝",
-    "██╔═══╝ ██╔══██║  ╚██╔╝  ██╔═══╝ ",
-    "██║     ██║  ██║   ██║   ██║     ",
-    "╚═╝     ╚═╝  ╚═╝   ╚═╝   ╚═╝     ",
-]
+def _supports_truecolor(console: Console) -> bool:
+    """Whether the active terminal can render 24-bit color escapes.
+
+    macOS Terminal.app and other 256-color-only emulators parse each numeric
+    component of `\\e[38;2;r;g;bm` as its own SGR command, producing the
+    rainbow-block garbage you see when a truecolor gradient hits them. When
+    this returns False, the animator stays off and the static dashboard's
+    auto-downgraded 256-color gradient is left in place as the fallback.
+    """
+    if os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit"):
+        return True
+    if os.environ.get("TERM_PROGRAM") == "Apple_Terminal":
+        return False
+    return console.color_system == "truecolor"
 
 
-# ── Loading animation ──────────────────────────────────────────────────
+def _build_frame_console(width: int) -> tuple[Console, StringIO]:
+    """Build a Rich console that writes into a StringIO buffer.
 
-def _loading_animation(console: Console) -> None:
-    """Quick gradient progress bar using Rich Progress."""
-    # Build a custom bar style — Rich BarColumn supports style + complete_style
-    r1, g1, b1 = C1
-    r2, g2, b2 = C2
-    with Progress(
-        TextColumn("  "),
-        BarColumn(
-            bar_width=36,
-            style=f"rgb({r1},{g1},{b1})",
-            complete_style=f"rgb({r2},{g2},{b2})",
-            finished_style=f"rgb({r2},{g2},{b2})",
+    Uses `\\x1b[E` (Cursor Next Line) instead of `\\n` so emitted frames
+    don't scroll the viewport when the cursor is near the bottom.
+    """
+    buf = StringIO()
+    return (
+        Console(
+            file=buf,
+            force_terminal=True,
+            color_system="truecolor",
+            width=width,
+            legacy_windows=False,
+            emoji=False,
+            markup=False,
+            highlight=False,
         ),
-        console=console,
-        transient=True,  # disappears when done
-    ) as progress:
-        task = progress.add_task("", total=100)
-        for _ in range(100):
-            progress.advance(task, 1)
-            time.sleep(0.008)
-    time.sleep(0.15)
+        buf,
+    )
 
 
-# ── Public API ─────────────────────────────────────────────────────────
+class BannerAnimator:
+    """Keeps the banner shimmering in place while the REPL waits for input.
+
+    Runs a daemon thread that every ~1/fps seconds writes one frame to
+    `console.file` as a single atomic sequence:
+
+        \\x1b7  save cursor
+        \\x1b[{N}A  move up N rows (N = rows_above, counted from the prompt line)
+        \\r  column 1
+        <banner ansi>  rendered via CNL separators, no linefeeds
+        \\x1b8  restore cursor
+
+    Coexists with prompt_toolkit because the save/restore pair leaves the
+    cursor where the prompt put it, and writes land on rows above the prompt
+    that prompt_toolkit doesn't touch.
+    """
+
+    def __init__(
+        self,
+        console: Console,
+        rows_above: int,
+        *,
+        lines: list[str] | None = None,
+        cycle_seconds: float = 3.0,
+        fps: int = 20,
+    ) -> None:
+        self.console = console
+        self.rows_above = rows_above
+        self.lines = lines if lines is not None else pick_banner_for_console(console)
+        self.cycle_seconds = cycle_seconds
+        self.fps = fps
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        max_cols = max((len(l) for l in self.lines), default=1)
+        self._frame_console, self._frame_buf = _build_frame_console(max_cols + 4)
+        self._last_payload: str | None = None
+
+    def start(self) -> bool:
+        if self._thread is not None or self._stop.is_set():
+            return False
+        if (
+            not self.console.is_terminal
+            or self.console.is_dumb_terminal
+            or self.console.color_system is None
+        ):
+            return False
+        if not _supports_truecolor(self.console):
+            return False
+        try:
+            size = self.console.size
+            height, width = size.height, size.width
+        except Exception:
+            height, width = 24, 80
+        banner_h = len(self.lines)
+        banner_w = max((len(l) for l in self.lines), default=0)
+        if banner_w > width or banner_h >= height:
+            return False
+        if self.rows_above < banner_h or self.rows_above >= height - 1:
+            return False
+        self._thread = threading.Thread(
+            target=self._run, daemon=True, name="payp-banner-anim"
+        )
+        self._thread.start()
+        return True
+
+    def stop(self) -> None:
+        self._stop.set()
+        t = self._thread
+        if t is not None:
+            t.join(timeout=0.3)
+        self._thread = None
+
+    def _run(self) -> None:
+        try:
+            start_size = self._current_size()
+            start = time.perf_counter()
+            interval = 1.0 / self.fps
+            while not self._stop.is_set():
+                if self._current_size() != start_size:
+                    return
+                elapsed = time.perf_counter() - start
+                phase = (elapsed / self.cycle_seconds) * 2.0
+                phase = phase - int(phase / 2.0) * 2.0
+                self._draw(phase)
+                if self._stop.wait(interval):
+                    break
+        except Exception:
+            pass
+
+    def _current_size(self) -> tuple[int, int]:
+        try:
+            size = self.console.size
+            return size.width, size.height
+        except Exception:
+            return 0, 0
+
+    def _build_payload(self, phase: float) -> str:
+        frame = _gradient_2d(self.lines, phase=phase)
+        self._frame_buf.seek(0)
+        self._frame_buf.truncate(0)
+        self._frame_console.print(frame, end="")
+        ansi = self._frame_buf.getvalue()
+        return ansi.rstrip("\n").replace("\n", "\x1b[E")
+
+    def _draw(self, phase: float) -> None:
+        payload = self._build_payload(phase)
+        if payload == self._last_payload:
+            return
+        self._last_payload = payload
+        seq = (
+            "\x1b7"
+            + f"\x1b[{self.rows_above}A"
+            + "\r"
+            + payload
+            + "\x1b8"
+        )
+        try:
+            self.console.file.write(seq)
+            self.console.file.flush()
+        except Exception:
+            self._stop.set()
+
 
 def render_status_dashboard(
     console: Console,
@@ -115,20 +380,19 @@ def render_status_dashboard(
     mode: str,
     snapshot_count: int,
     session_count: int | None = None,
-    animate: bool = True,
 ) -> None:
-    """Render the welcome screen."""
+    """Render the welcome screen as a single static frame.
 
-    if animate:
-        _loading_animation(console)
+    The continuous shimmer is driven separately by `BannerAnimator` while
+    the REPL waits for input.
+    """
+    lines = pick_banner_for_console(console)
+    # On 256-color terminals (Terminal.app et al.) the animator stays off, so
+    # drop the colored backdrop too — otherwise the dim-bg cells quantize into
+    # visible blocky stripes instead of reading as a filled banner.
+    static_backdrop = _BANNER_BACKDROP if _supports_truecolor(console) else 0.0
+    console.print(_gradient_2d(lines, backdrop=static_backdrop), highlight=False)
 
-    console.print()
-
-    # ── Banner ──
-    banner_text = _gradient_2d(BANNER)
-    console.print(banner_text, highlight=False)
-
-    # ── Tagline ──
     tagline = Text()
     tagline.append(f"v{version}", style="dim")
     tagline.append("  ")
@@ -136,7 +400,6 @@ def render_status_dashboard(
     console.print(tagline, highlight=False)
     console.print()
 
-    # ── Info panel ──
     grid = Table.grid(padding=(0, 2))
     grid.add_column(justify="right", no_wrap=True, width=12, style="dim")
     grid.add_column(justify="left")
@@ -160,7 +423,6 @@ def render_status_dashboard(
             ),
         )
 
-    # Database — only when connected
     if connection_name and connection_status:
         r, g, b = C2
         db_text = Text()
@@ -168,7 +430,7 @@ def render_status_dashboard(
         db_text.append(f"  ({connection_status})", style="dim")
         grid.add_row("Database", db_text)
     elif connection_name:
-        grid.add_row("Database", Text(f"{connection_name} — not connected", style="dim"))
+        grid.add_row("Database", Text(f"{connection_name} - not connected", style="dim"))
 
     # Mode
     mode_colors = {
@@ -219,3 +481,5 @@ def render_compact_hint(console: Console) -> None:
     hint.append(" to exit", style="dim")
     console.print(hint)
     console.print()
+
+

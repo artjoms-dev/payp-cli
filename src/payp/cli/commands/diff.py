@@ -107,7 +107,8 @@ def _cmd_diff(args: str) -> None:
             )
         )
     except Exception as e:
-        console.print(f"[red]Diff failed: {e}[/red]")
+        from payp.ui.errors import show_error
+        show_error("Diff failed", str(e), exc=e, logger_name="payp.cli.commands.diff")
         return
 
     if not result.success:

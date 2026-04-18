@@ -18,7 +18,7 @@ from rich.console import Console
 from payp.core.llm import LLMClient
 from payp.db.connection import ConnectionManager
 from payp.models import SchemaCatalog, SchemaGraph, SchemaIndex, SecurityMode
-from payp.prompts.system import build_system_prompt
+from payp.prompts.system import SystemPrompt, build_system_prompt
 from payp.skills.registry import SkillRegistry, discover_skills
 from payp.storage.sessions import SessionWriter
 from payp.storage.transaction_log import TransactionLog
@@ -80,8 +80,18 @@ class ChatSession:
         The catalog lives in `payp.tools.registry` — single source of
         truth shared with the MCP server. `write_knowledge` is excluded
         because the CLI uses the propose_knowledge → user approval flow.
+
+        The active `db_type` is passed so `execute_sql`'s description
+        carries the dialect-specific hard rules. Rebuilt on every
+        connection change via `_ensure_chat_session`.
         """
-        return build_cli_registry()
+        db_type = "postgresql"
+        if self.conn is not None:
+            try:
+                db_type = self.conn.profile.db_type.value
+            except AttributeError:
+                db_type = str(self.conn.profile.db_type)
+        return build_cli_registry(db_type=db_type)
 
     def _build_context(self) -> dict[str, Any]:
         """Build context dict passed to tool calls."""
@@ -92,7 +102,7 @@ class ChatSession:
             "t1": self.t1,
             "mode": self.mode,
             "skills": self.skills,
-            "chat_session": self,  # so tools can reach self.session_file, etc.
+            "chat_session": self,  # so tools can reach self.session.path, etc.
         }
 
     def _display_tool_data(self, tool_name: str, result: Any, sql: str = "") -> None:
@@ -112,12 +122,15 @@ class ChatSession:
                 )
                 # Remember this SELECT for /more pagination
                 if sql:
-                    self.last_select = {
+                    select_data = {
                         "sql": sql,
                         "connection": self.conn.profile.name if self.conn else None,
                         "offset": 20,  # next page starts after this batch
                         "truncated": d.get("truncated", False),
                     }
+                    if self.multi_conn:
+                        self.multi_conn.set_last_select(select_data)
+                    self.last_select = select_data
             elif "rows_affected" in d:
                 display_dml_result(
                     self.console,
@@ -186,8 +199,8 @@ class ChatSession:
     ) -> Any:
         return await execute_sql_with_mode(self, tool, args, context, user_request)
 
-    async def _get_system_prompt(self, user_text: str = "") -> str:
-        """Build the dynamic system prompt with smart T2 injection."""
+    async def _get_system_prompt(self, user_text: str = "") -> SystemPrompt:
+        """Build the system prompt (static + dynamic halves) with smart T2 injection."""
         conn_name = None
         db_version = None
         db_type = "postgresql"
@@ -209,6 +222,9 @@ class ChatSession:
             except Exception:
                 pass
 
+        from payp.config import load_config
+        schema_budget = load_config().schema_budget
+
         from payp.storage.knowledge import get_knowledge_dir
         active_connections = (
             self.multi_conn.list_info() if self.multi_conn else None
@@ -218,6 +234,7 @@ class ChatSession:
             self.skills.for_dialect(db_type) if self.conn and self.conn.is_connected
             else self.skills.all()
         )
+        advanced_tool_names = self.registry.advanced_names()
         return build_system_prompt(
             mode=self.mode,
             connection_name=conn_name,
@@ -230,20 +247,23 @@ class ChatSession:
             knowledge_dir=get_knowledge_dir(),
             active_connections=active_connections,
             skills=skills_for_prompt or None,
+            schema_budget=schema_budget,
+            advanced_tool_names=advanced_tool_names,
         )
 
-    def get_context_stats(self, system_prompt: str = "") -> Any:
+    def get_context_stats(self, system_prompt: str | SystemPrompt = "") -> Any:
         """Return current context usage statistics."""
         from payp.core.compaction import count_tokens, get_context_stats
         model = self.llm.get_executor_model()
+        sys_text = str(system_prompt) if system_prompt else ""
         sys_tokens = (
-            count_tokens([{"role": "system", "content": system_prompt}], model)
-            if system_prompt
+            count_tokens([{"role": "system", "content": sys_text}], model)
+            if sys_text
             else 0
         )
         return get_context_stats(self.messages, model, system_prompt_tokens=sys_tokens)
 
-    async def _auto_compact_if_needed(self, system_prompt: str) -> None:
+    async def _auto_compact_if_needed(self, system_prompt: str | SystemPrompt) -> None:
         """Auto-compact if context usage >= 75%."""
         stats = self.get_context_stats(system_prompt)
         if stats.should_compact:
@@ -277,22 +297,35 @@ class ChatSession:
         """Process a user message through the full chat loop."""
         from payp.ui.abort import AbortWatcher
 
+        # Check cost limit before making the LLM call
+        exceeded, msg = self.llm.check_cost_limit()
+        if exceeded:
+            self.console.print(f"[red]{msg}[/red]")
+            return
+        if msg:  # 80% warning
+            self.console.print(f"[yellow]{msg}[/yellow]")
+
         # Add user message to history
         self.messages.append({"role": "user", "content": user_input})
         self.session.log_user(user_input)
 
-        # Build messages with system prompt
+        # Build messages with system prompt (split into static + dynamic so
+        # llm.py can mark the static half with Anthropic cache_control).
         system_prompt = await self._get_system_prompt(user_text=user_input)
 
         # Check context usage and auto-compact if needed
         await self._auto_compact_if_needed(system_prompt)
 
+        # Two adjacent system messages signal the split to llm.py. For
+        # providers that don't support prompt caching, llm.py merges them
+        # back into a single plain-string system message.
         full_messages = [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": system_prompt.static},
+            {"role": "system", "content": system_prompt.dynamic},
             *self.messages,
         ]
 
-        tools = self.registry.all_definitions()
+        tools = self.registry.core_definitions()
 
         # Wrap the whole loop with Esc-abort (AbortController pattern from Claude Code)
         async with AbortWatcher() as watcher:

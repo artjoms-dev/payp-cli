@@ -30,6 +30,7 @@ class BaseTool(ABC):
     description: str
     is_read_only: bool = True
     is_destructive: bool = False
+    tier: str = "core"  # "core", "advanced"
 
     @abstractmethod
     def get_parameters_schema(self) -> dict[str, Any]:
@@ -82,6 +83,14 @@ class ToolRegistry:
 
     def all_definitions(self) -> list[ToolDefinition]:
         return [t.to_definition() for t in self._tools.values()]
+
+    def core_definitions(self) -> list[ToolDefinition]:
+        """Return only core-tier tool definitions (for default LLM context)."""
+        return [t.to_definition() for t in self._tools.values() if t.tier == "core"]
+
+    def advanced_names(self) -> list[str]:
+        """Return names of advanced-tier tools (for system prompt listing)."""
+        return [t.name for t in self._tools.values() if t.tier == "advanced"]
 
     def all_tools(self) -> list[BaseTool]:
         return list(self._tools.values())

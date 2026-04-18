@@ -2,18 +2,50 @@
 
 Snapshots are JSONL backup files created before DELETE/UPDATE operations.
 They are the safety net that LLM memory cannot provide.
+
+Public registered tool: `SnapshotsTool` (name=`snapshots`). It dispatches
+by an `action` arg to the four internal operations (create / list /
+restore / delete). Bundling them into one schema saves ~350 tokens per
+turn vs registering four separate tool definitions.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from datetime import UTC, datetime
 from hashlib import md5
 from pathlib import Path
 from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
+
+
+def _validate_where_clause(clause: str) -> str | None:
+    """Reject obvious SQL injection patterns in WHERE clauses.
+
+    Returns error message if dangerous, None if OK.
+    WHERE clauses cannot be parameterized, so this heuristic plus
+    the approval flow provide defense-in-depth.
+    """
+    if ";" in clause:
+        return "WHERE clause must not contain semicolons"
+    if "--" in clause or "/*" in clause:
+        return "WHERE clause must not contain SQL comments"
+    # Strip quoted strings before checking keywords
+    unquoted = re.sub(r"'[^']*'", "", clause)
+    dangerous = re.search(
+        r"\b(DROP|DELETE|INSERT|UPDATE|TRUNCATE|ALTER|CREATE|GRANT|REVOKE|EXEC|EXECUTE)\b",
+        unquoted,
+        re.IGNORECASE,
+    )
+    if dangerous:
+        return f"WHERE clause contains forbidden keyword: {dangerous.group()}"
+    return None
 
 
 class SnapshotBeforeDeleteTool(BaseTool):
@@ -73,6 +105,9 @@ class SnapshotBeforeDeleteTool(BaseTool):
         # It is covered by the same approval flow as execute_sql.
         sql = f"SELECT * FROM {table_q}"  # nosec B608
         if where:
+            err = _validate_where_clause(where)
+            if err:
+                return ToolResult(success=False, error=err)
             sql += f" WHERE {where}"  # nosec B608
 
         try:
@@ -139,6 +174,7 @@ class SnapshotBeforeDeleteTool(BaseTool):
             )
 
         except Exception as e:
+            logger.exception("SnapshotBeforeDeleteTool failed")
             return ToolResult(success=False, error=str(e), summary=f"Snapshot failed: {e}")
 
 
@@ -229,6 +265,7 @@ class RestoreSnapshotTool(BaseTool):
             )
 
         except Exception as e:
+            logger.exception("RestoreSnapshotTool failed")
             return ToolResult(success=False, error=str(e), summary=f"Restore failed: {e}")
 
 
@@ -333,4 +370,84 @@ class DeleteSnapshotTool(BaseTool):
             success=len(failed) == 0,
             data={"deleted": deleted, "failed": failed},
             summary=summary,
+        )
+
+
+class SnapshotsTool(BaseTool):
+    """Merged snapshots tool — single schema, dispatches by `action`.
+
+    Replaces four separate registrations (create/list/restore/delete)
+    with one. `is_destructive` is a per-call property — only
+    action=delete is destructive — but the chat-loop destructive-approval
+    path keys on tool name + is_destructive, so we surface True and let
+    the approval wrapper decide based on args.
+    """
+
+    name = "snapshots"
+    description = (
+        "Manage JSONL row-backup files created before destructive DML. "
+        "Pick `action`:\n"
+        "- `create`: backup rows before a DELETE/UPDATE. REQUIRED before any write. "
+        "Needs `table`, `operation` (DELETE|UPDATE), and `where_clause` matching what you'll run.\n"
+        "- `list`: list existing snapshots; optional `filter_table`, `filter_operation`.\n"
+        "- `restore`: re-insert rows from a snapshot file (needs `file`).\n"
+        "- `delete`: permanently remove one or more snapshot files (needs `files` array)."
+    )
+    is_read_only = False
+    is_destructive = True  # gated per-action below via call()
+
+    def __init__(self) -> None:
+        self._create = SnapshotBeforeDeleteTool()
+        self._list = ListSnapshotsTool()
+        self._restore = RestoreSnapshotTool()
+        self._delete = DeleteSnapshotTool()
+
+    def get_parameters_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["create", "list", "restore", "delete"],
+                    "description": "Which operation to perform",
+                },
+                "table": {"type": "string", "description": "Table name (create)"},
+                "where_clause": {
+                    "type": "string",
+                    "description": "WHERE clause without the keyword (create). Empty = all rows.",
+                },
+                "operation": {
+                    "type": "string",
+                    "enum": ["DELETE", "UPDATE"],
+                    "description": "DML type that will follow (create)",
+                },
+                "filter_table": {"type": "string", "description": "Filter by table (list)"},
+                "filter_operation": {
+                    "type": "string",
+                    "enum": ["DELETE", "UPDATE"],
+                    "description": "Filter by operation (list)",
+                },
+                "file": {"type": "string", "description": "Snapshot file path (restore)"},
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Snapshot file paths to delete (delete)",
+                },
+            },
+            "required": ["action"],
+        }
+
+    async def call(self, args: dict[str, Any], context: dict[str, Any]) -> ToolResult:
+        action = (args.get("action") or "").strip().lower()
+        if action == "create":
+            return await self._create.call(args, context)
+        if action == "list":
+            return await self._list.call(args, context)
+        if action == "restore":
+            return await self._restore.call(args, context)
+        if action == "delete":
+            return await self._delete.call(args, context)
+        return ToolResult(
+            success=False,
+            error=f"Unknown action '{action}'. Use one of: create, list, restore, delete.",
         )

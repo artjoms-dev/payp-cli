@@ -15,11 +15,14 @@ cannot bypass the user confirmation step outside of YOLO mode.
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import Any
 
 from payp.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 VALID_TARGETS = (
     "sessions",
@@ -33,6 +36,7 @@ VALID_TARGETS = (
 
 class CleanupTool(BaseTool):
     name = "cleanup"
+    tier = "advanced"
     description = (
         "Delete stored payp artifacts. Targets:\n"
         "  - sessions: chat session history (JSONL files)\n"
@@ -47,7 +51,19 @@ class CleanupTool(BaseTool):
         "connection (cache), tag (queries). "
         "This tool ALWAYS shows the user what will be deleted and waits for "
         "confirmation before executing (except in YOLO mode). Use it when the "
-        "user asks to clean up, purge, remove old, or free space."
+        "user asks to clean up, purge, remove old, or free space.\n\n"
+        "Examples:\n"
+        '  cleanup(target="sessions", empty=true, reason="...")            -- default: stubs only\n'
+        '  cleanup(target="sessions", all=true, reason="...")              -- wipe EVERYTHING (active session protected)\n'
+        '  cleanup(target="sessions", older_than_days=7, keep_last=10, reason="...")\n'
+        '  cleanup(target="cache", connection="test-pg", reason="...")\n'
+        '  cleanup(target="snapshots", older_than_days=14, keep_last=5, reason="...")\n'
+        '  cleanup(target="legacy_knowledge", reason="user asked to remove legacy knowledge dir")\n\n'
+        "Set all=true when the user says 'all', 'everything', 'wipe', 'clear', or 'force cleanup'. "
+        "ALWAYS set the reason field so the user sees why in the approval panel. "
+        "The tool will refuse to delete legacy_knowledge if migration hasn't happened yet -- "
+        "pass force=true only if the user explicitly wants to delete unmigrated data. "
+        "Never try to clean up via execute_shell (rm -rf) -- always use this tool."
     )
     is_read_only = False
     is_destructive = True
@@ -154,6 +170,7 @@ class CleanupTool(BaseTool):
             else:
                 return ToolResult(success=False, error=f"Unsupported target: {target}")
         except Exception as e:
+            logger.exception("cleanup_tool failed")
             return ToolResult(success=False, error=f"{target} cleanup failed: {e}")
 
         n = len(result.get("deleted", []))
@@ -187,8 +204,8 @@ class CleanupTool(BaseTool):
         protected: set[str] = set()
         if context:
             chat = context.get("chat_session") or context.get("chat")
-            if chat and getattr(chat, "session_file", None):
-                protected.add(str(chat.session_file))
+            if chat and hasattr(chat, "session") and getattr(chat.session, "path", None):
+                protected.add(str(chat.session.path))
         if keep_last is not None and keep_last > 0:
             for s in sessions[:keep_last]:
                 protected.add(s["file"])
@@ -232,8 +249,8 @@ class CleanupTool(BaseTool):
         # Protect the active session if chat is running
         current_file = None
         chat = context.get("chat_session") or context.get("chat")
-        if chat and getattr(chat, "session_file", None):
-            current_file = str(chat.session_file)
+        if chat and hasattr(chat, "session") and getattr(chat.session, "path", None):
+            current_file = str(chat.session.path)
 
         all_flag = args.get("all", False)
         older_than = args.get("older_than_days")

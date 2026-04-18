@@ -27,6 +27,14 @@ def _cmd_models(args: str) -> None:
         _setup_new_provider()
         return
 
+    if subcommand == "set":
+        role = parts[1].lower() if len(parts) > 1 else ""
+        if role not in ("executor", "reviewer"):
+            console.print("[red]Usage: /models set executor  or  /models set reviewer[/red]")
+            return
+        _cmd_models_set(role)
+        return
+
     if subcommand in {"check", "balance"}:
         provider_name = parts[1].lower() if len(parts) > 1 else "openrouter"
         _check_provider(provider_name, providers)
@@ -37,17 +45,33 @@ def _cmd_models(args: str) -> None:
         _setup_new_provider()
         return
 
-    from rich.table import Table
+    provider_names = list(providers.keys())
 
+    # Direct access by name or number: /models 1  or  /models azure
+    if args and subcommand not in {"add", "check", "balance"}:
+        target_name = args
+        if args.isdigit() and 1 <= int(args) <= len(provider_names):
+            target_name = provider_names[int(args) - 1]
+        provider = providers.get(target_name)
+        if provider:
+            _show_provider_details(target_name, provider)
+            return
+        console.print(f"[red]Provider '{target_name}' not found.[/red]")
+        return
+
+    from rich.table import Table
     from payp.ui.theme import Color
+
     table = Table(title=f"[{Color.BRAND}]AI Model Providers[/{Color.BRAND}]")
+    table.add_column("#", style="dim")
     table.add_column("Provider", style="bold")
     table.add_column("Default Model")
     table.add_column("Status")
 
-    for name, provider in providers.items():
+    for i, name in enumerate(provider_names, 1):
+        provider = providers[name]
         status_cell = f"[{Color.BRAND_ALT}]✓ configured[/{Color.BRAND_ALT}]"
-        table.add_row(name, provider.default_model or "—", status_cell)
+        table.add_row(str(i), name, provider.default_model or "—", status_cell)
 
     console.print(table)
     console.print(f"\nExecutor: [{Color.BRAND_ALT}]{roles.executor}[/{Color.BRAND_ALT}]")
@@ -55,6 +79,126 @@ def _cmd_models(args: str) -> None:
         console.print(f"Reviewer: [{Color.BRAND_ALT}]{roles.reviewer}[/{Color.BRAND_ALT}]")
     else:
         console.print("Reviewer: [dim]not set[/dim]")
+
+    console.print(
+        f"\n[dim]Enter provider number, name, [/dim]"
+        f"[{Color.BRAND_ALT}]new[/{Color.BRAND_ALT}][dim] to add, or [/dim]"
+        f"[red]del[/red][dim] to remove.[/dim]"
+    )
+    options: dict[str, str] = {"new": "__new__", "del": "__del__"}
+    for i, name in enumerate(provider_names, 1):
+        options[str(i)] = name
+        options[name.lower()] = name
+    action = prompt_choice("Select: ", options)
+
+    if action == "__new__":
+        _setup_new_provider()
+    elif action == "__del__":
+        _delete_provider(providers)
+    else:
+        _show_provider_details(action, providers[action])
+
+
+def _show_provider_details(name: str, provider: ModelProvider) -> None:
+    from rich.panel import Panel
+    from payp.config import load_model_roles, save_models_config
+    from payp.ui.theme import Color
+
+    masked_key = provider.api_key
+    if len(masked_key) > 12:
+        masked_key = f"{masked_key[:4]}...{masked_key[-4:]}"
+
+    lines = [
+        f"Provider:       [{Color.BRAND_ALT}]{name}[/{Color.BRAND_ALT}]",
+        f"Default model:  {provider.default_model or '—'}",
+        f"Base URL:       {provider.base_url or '—'}",
+    ]
+    if provider.api_version:
+        lines.append(f"API version:    {provider.api_version}")
+    lines.append(f"API key:        {masked_key}")
+    console.print(Panel("\n".join(lines), title="Provider Details", border_style=Color.BRAND))
+
+    model_ref = f"{name}/{provider.default_model}" if provider.default_model else name
+    roles = load_model_roles()
+
+    console.print(
+        f"\n[dim]Set role for[/dim] [{Color.BRAND_ALT}]{model_ref}[/{Color.BRAND_ALT}]:"
+    )
+    console.print(f"  [{Color.BRAND_ALT}]1.[/{Color.BRAND_ALT}] Executor")
+    console.print(f"  [{Color.BRAND_ALT}]2.[/{Color.BRAND_ALT}] Reviewer")
+    console.print(f"  [{Color.BRAND_ALT}]3.[/{Color.BRAND_ALT}] Both")
+    console.print(f"  [{Color.BRAND_ALT}]4.[/{Color.BRAND_ALT}] None — just view")
+
+    choice = prompt_choice(
+        "Select: ",
+        {"1": "executor", "2": "reviewer", "3": "both", "4": "none"},
+    )
+
+    if choice == "executor":
+        roles.executor = model_ref
+    elif choice == "reviewer":
+        roles.reviewer = model_ref
+    elif choice == "both":
+        roles.executor = model_ref
+        roles.reviewer = model_ref
+    else:
+        return
+
+    providers = load_models_config()
+    save_models_config(providers, roles)
+    console.print(f"[{Color.BRAND_ALT}]Roles updated.[/{Color.BRAND_ALT}]")
+    console.print(f"  Executor: {roles.executor}")
+    console.print(f"  Reviewer: {roles.reviewer or '[dim]not set[/dim]'}")
+
+
+def _delete_provider(providers: dict[str, ModelProvider]) -> None:
+    """Interactive wizard to delete a saved provider."""
+    from rich.table import Table
+    from payp.config import load_model_roles, save_models_config
+    from payp.models import ModelRoles
+    from payp.ui.theme import Color
+
+    if not providers:
+        console.print("[yellow]No providers to delete.[/yellow]")
+        return
+
+    provider_names = list(providers.keys())
+    if len(provider_names) == 1:
+        target_name = provider_names[0]
+    else:
+        table = Table(title=f"[{Color.BRAND}]Delete Provider — Select[/{Color.BRAND}]")
+        table.add_column("#", style="dim")
+        table.add_column("Name", style="bold")
+        table.add_column("Default Model")
+        for i, name in enumerate(provider_names, 1):
+            provider = providers[name]
+            table.add_row(str(i), name, provider.default_model or "—")
+        console.print(table)
+        options: dict[str, str] = {}
+        for i, name in enumerate(provider_names, 1):
+            options[str(i)] = name
+            options[name.lower()] = name
+        try:
+            target_name = prompt_choice("Select provider to delete: ", options)
+        except (KeyboardInterrupt, EOFError):
+            console.print("[dim]Cancelled.[/dim]")
+            return
+
+    provider = providers[target_name]
+    model_str = f" ({provider.default_model or 'no model'})"
+    if not prompt_confirm(f"Delete '{target_name}'{model_str}?", default=False):
+        console.print("[dim]Cancelled.[/dim]")
+        return
+
+    del providers[target_name]
+    roles = load_model_roles()
+    # Clear roles that reference the deleted provider
+    if roles.executor and (roles.executor == target_name or roles.executor.startswith(target_name + "/")):
+        roles.executor = ModelRoles().executor
+    if roles.reviewer and (roles.reviewer == target_name or roles.reviewer.startswith(target_name + "/")):
+        roles.reviewer = None
+    save_models_config(providers, roles)
+    console.print(f"[{Color.BRAND_ALT}]Provider '{target_name}' deleted.[/{Color.BRAND_ALT}]")
 
 
 def _type_print(text: str, duration_ms: int = 500) -> None:
@@ -86,18 +230,20 @@ def _setup_new_provider(*, animate_intro: bool = False) -> None:
             "  2. Anthropic (Claude)\n"
             "  3. OpenAI\n"
             "  4. Google (Gemini)\n"
-            "  5. Ollama (local)"
+            "  5. Ollama (local)\n"
+            "  6. Azure"
         )
         _type_print(intro, duration_ms=500)
     else:
         console.print(f"\n[{Color.BRAND}]Add AI Provider[/{Color.BRAND}]\n")
         console.print(
-            f"  [{Color.BRAND_ALT}]1.[/{Color.BRAND_ALT}] OpenRouter (recommended — one key, all models)"  # noqa: E501
+            f"  [{Color.BRAND_ALT}]1.[/{Color.BRAND_ALT}] OpenRouter (recommended — one key, all models)"
         )
         console.print(f"  [{Color.BRAND_ALT}]2.[/{Color.BRAND_ALT}] Anthropic (Claude)")
         console.print(f"  [{Color.BRAND_ALT}]3.[/{Color.BRAND_ALT}] OpenAI")
         console.print(f"  [{Color.BRAND_ALT}]4.[/{Color.BRAND_ALT}] Google (Gemini)")
         console.print(f"  [{Color.BRAND_ALT}]5.[/{Color.BRAND_ALT}] Ollama (local)")
+        console.print(f"  [{Color.BRAND_ALT}]6.[/{Color.BRAND_ALT}] Azure")
 
     provider_map: dict[str, tuple[str, str | None]] = {
         "1": ("openrouter", None),
@@ -105,12 +251,40 @@ def _setup_new_provider(*, animate_intro: bool = False) -> None:
         "3": ("openai", None),
         "4": ("gemini", None),
         "5": ("ollama", "http://localhost:11434"),
+        "6": ("azure", None),
     }
     name, base_url = prompt_choice("Select: ", provider_map)
 
     if name == "ollama":
         url = prompt_required(f"Ollama URL [{base_url}]: ", default=base_url)
         provider = ModelProvider(api_key="ollama", base_url=url)
+    elif name == "azure":
+        api_key = prompt_required("Enter Azure API key: ", is_password=True)
+        url = prompt_required(
+            "Azure endpoint base URL (e.g. https://<resource>.openai.azure.com/): "
+        )
+        model_name = prompt_required("Deployment name (e.g. gpt-5.4): ")
+        api_version = prompt_required("API version (e.g. 2024-12-01-preview): ")
+        provider = ModelProvider(
+            api_key=api_key, base_url=url,
+            default_model=model_name, api_version=api_version,
+        )
+        # Allow custom name when "azure" already exists (e.g. azure-claude)
+        providers = load_models_config()
+        if name in providers:
+            custom = prompt_required(
+                f"Name already taken. Enter a unique name [{name}]: ", default=name,
+            )
+            if custom != name:
+                name = custom
+    elif name == "anthropic":
+        api_key = prompt_required("Enter Anthropic API key: ", is_password=True)
+        if prompt_confirm("Use custom base URL (e.g. for Azure-hosted Claude)?", default=False):
+            url = prompt_required("Anthropic base URL: ")
+            model_name = prompt_required("Model name (e.g. claude-sonnet-4-6): ")
+            provider = ModelProvider(api_key=api_key, base_url=url, default_model=model_name)
+        else:
+            provider = ModelProvider(api_key=api_key)
     else:
         while True:
             api_key = prompt_required(f"Enter {name} API key: ", is_password=True)
@@ -120,15 +294,151 @@ def _setup_new_provider(*, animate_intro: bool = False) -> None:
             if _check_openrouter_key(api_key):
                 provider = ModelProvider(api_key=api_key)
                 break
-            if not prompt_confirm("OpenRouter key is unavailable. Try entering it again?", default=True):
+            if not prompt_confirm(
+                "OpenRouter key is unavailable. Try entering it again?", default=True
+            ):
                 console.print("[yellow]OpenRouter provider was not added.[/yellow]")
                 return
 
     providers = load_models_config()
+    old_provider = providers.get(name)
     providers[name] = provider
     roles = load_model_roles()
+
+    # When reconfiguring an existing provider whose default model changed,
+    # update any roles that still reference the old provider/model combo.
+    if old_provider and old_provider.default_model and provider.default_model:
+        old_ref = f"{name}/{old_provider.default_model}"
+        new_ref = f"{name}/{provider.default_model}"
+        if old_ref != new_ref:
+            if roles.executor == old_ref:
+                roles.executor = new_ref
+            if roles.reviewer == old_ref:
+                roles.reviewer = new_ref
+
     save_models_config(providers, roles)
     console.print(f"\n[{Color.BRAND_ALT}]{name} configured.[/{Color.BRAND_ALT}]")
+
+
+def _fetch_openrouter_models(api_key: str) -> list[dict]:
+    """Fetch models from OpenRouter API, filtered to tool-calling capable ones"""
+    status, payload, err = _openrouter_get("/models", api_key)
+    if status != 200 or not isinstance(payload, dict):
+        if err:
+            console.print(f"[red]Failed to fetch models: {err}[/red]")
+        else:
+            console.print("[red]Failed to fetch models from OpenRouter.[/red]")
+        return []
+    raw = payload.get("data", [])
+    if not isinstance(raw, list):
+        return []
+    models = []
+    for m in raw:
+        if not isinstance(m, dict):
+            continue
+        mid = m.get("id", "")
+        if mid.startswith("openrouter/"):
+            continue
+        params = m.get("supported_parameters") or []
+        if "tools" not in params:
+            continue
+        pricing = m.get("pricing") or {}
+        prompt_price = float(pricing.get("prompt", 0)) * 1_000_000
+        compl_price = float(pricing.get("completion", 0)) * 1_000_000
+        if prompt_price < 0 or compl_price < 0:
+            continue
+        ctx = m.get("context_length", 0)
+        models.append({
+            "id": mid,
+            "name": m.get("name", mid),
+            "prompt_price": prompt_price,
+            "compl_price": compl_price,
+            "ctx": ctx,
+            "free": prompt_price == 0 and compl_price == 0,
+        })
+    # Recommended models first, then by price ascending
+    recommended = {"anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4.5",
+                    "anthropic/claude-sonnet-4.6", "google/gemini-2.5-pro",
+                    "google/gemini-2.5-flash", "openai/gpt-4.1",
+                    "deepseek/deepseek-chat-v3-0324"}
+    models.sort(key=lambda m: (m["id"] not in recommended, m["prompt_price"], m["id"]))
+    return models
+
+
+def _select_model(
+    models: list[dict], role: str, *, allow_skip: bool = False,
+) -> str | None:
+    """Show interactive selector for a model role (executor or reviewer)."""
+    from payp.ui.selector import SelectorItem, interactive_select
+    from payp.ui.theme import PTColor
+
+    items: list[SelectorItem] = []
+    if allow_skip:
+        items.append(SelectorItem(
+            label="(skip)", value=None, description="no reviewer",
+        ))
+    for m in models:
+        if m["free"]:
+            price_tag = "free"
+        else:
+            price_tag = f"${m['prompt_price']:.2f}/${m['compl_price']:.2f} per 1M tok"
+        ctx_tag = f"{m['ctx'] // 1000}k ctx" if m["ctx"] else ""
+        desc = f"{price_tag}  {ctx_tag}".strip()
+        items.append(SelectorItem(
+            label=m["id"], value=m["id"], description=desc,
+        ))
+
+    title: list[tuple[str, str]] = [
+        (PTColor.BRAND, f"Select {role}"),
+    ]
+    result = interactive_select(
+        console=console, title=title, items=items, visible=12, searchable=True,
+    )
+    if result.action != "select" or result.item is None:
+        return None
+    return result.item.value
+
+
+def _cmd_models_set(role: str) -> None:
+    """Interactive model picker for a single role (executor or reviewer)."""
+    from payp.ui.theme import Color
+
+    providers = load_models_config()
+    provider = providers.get("openrouter")
+    if not provider:
+        console.print(
+            "[yellow]OpenRouter is not configured. Run /models add first.[/yellow]"
+        )
+        return
+
+    console.print("[dim]Fetching available models from OpenRouter...[/dim]")
+    models = _fetch_openrouter_models(provider.api_key)
+    if not models:
+        return
+
+    console.print(f"[dim]{len(models)} models with tool-calling support[/dim]\n")
+
+    allow_skip = role == "reviewer"
+    choice = _select_model(models, role, allow_skip=allow_skip)
+    if choice is None and not allow_skip:
+        console.print("[dim]Cancelled.[/dim]")
+        return
+
+    roles = load_model_roles()
+    if role == "executor":
+        roles.executor = f"openrouter/{choice}"
+    else:
+        roles.reviewer = f"openrouter/{choice}" if choice else None
+
+    save_models_config(providers, roles)
+
+    if choice:
+        console.print(
+            f"  {role.capitalize()}: [{Color.BRAND_ALT}]{choice}[/{Color.BRAND_ALT}]"
+        )
+    else:
+        console.print(f"  {role.capitalize()}: [dim]removed[/dim]")
+    console.print(f"[{Color.BRAND_ALT}]Saved.[/{Color.BRAND_ALT}]")
 
 
 def _check_provider(provider_name: str, providers: dict[str, ModelProvider]) -> None:

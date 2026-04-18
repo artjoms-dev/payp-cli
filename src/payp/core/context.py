@@ -6,8 +6,11 @@ caches T2 DDL per-connection on disk, and respects a context budget.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from payp.config import global_dir
 from payp.db.connection import ConnectionManager
@@ -37,14 +40,14 @@ async def discover_t2_cached(conn: ConnectionManager, schema: str, table: str) -
     if cache_path.exists():
         try:
             return cache_path.read_text()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("T2 cache read failed, re-introspecting: %s", e)
 
     ddl = await discover_t2(conn, schema, table)
     try:
         cache_path.write_text(ddl)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("T2 cache write failed: %s", e)
     return ddl
 
 
@@ -129,8 +132,8 @@ async def fk_related_tables(
                    AND ac.constraint_type = 'R'
             """, (schema, table))
             return [(r["ref_schema"], r["ref_table"]) for r in rows]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("FK discovery failed for table: %s", e)
     return []
 
 
@@ -163,7 +166,8 @@ async def build_t2_context(
     for schema, table in detected:
         try:
             fk_targets = await fk_related_tables(conn, schema, table)
-        except Exception:
+        except Exception as e:
+            logger.debug("FK expansion skipped: %s", e)
             continue
         for ref in fk_targets:
             if ref not in seen:
@@ -180,7 +184,8 @@ async def build_t2_context(
     for schema, table in tables_to_load:
         try:
             ddl = await discover_t2_cached(conn, schema, table)
-        except Exception:
+        except Exception as e:
+            logger.debug("T2 loading skipped: %s", e)
             continue
 
         if total_chars + len(ddl) > budget:

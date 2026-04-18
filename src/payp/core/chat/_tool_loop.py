@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
-from payp.ui.streaming import display_tool_call, display_tool_result, stream_response
+from payp.ui.streaming import (
+    display_tool_call,
+    display_tool_result,
+    stream_response,
+)
 
 from ._tool_io import parse_tool_calls, summarize_tool_response
 
 if TYPE_CHECKING:
     from ._facade import ChatSession
+
+logger = logging.getLogger(__name__)
 
 
 MAX_TOOL_ROUNDS = 30  # Prevent infinite tool call loops (Claude Code uses 30-50)
@@ -41,8 +48,7 @@ async def run_tool_loop(
             try:
                 session.session.log_assistant(content, model=session.llm.get_executor_model())
             except Exception:
-                # Logging must never break the chat loop.
-                pass
+                logger.exception("session log_assistant failed")
 
         # If no tool calls, we're done
         if not raw_tool_calls:
@@ -64,6 +70,9 @@ async def run_tool_loop(
                     }
                 )
                 continue  # retry the loop
+            # Status line is refreshed by the outer REPL loop before the
+            # next prompt, so this function doesn't print it itself — that
+            # previously produced a duplicate bar stacked under the prompt.
             break
 
         # Process tool calls
@@ -144,8 +153,15 @@ async def run_tool_loop(
                             )
                         except Exception:
                             pass
-                    # Handle knowledge proposal — ask user before saving
-                    if tc.name == "propose_knowledge" and result.success and result.data:
+                    # Handle knowledge proposal — ask user before saving.
+                    # `knowledge(action="propose")` is the merged-tool entry
+                    # point; the legacy `propose_knowledge` name is kept for
+                    # any in-flight session replay.
+                    is_propose = (
+                        tc.name == "propose_knowledge"
+                        or (tc.name == "knowledge" and tc.arguments.get("action") == "propose")
+                    )
+                    if is_propose and result.success and result.data:
                         tool_response = await session._handle_knowledge_proposal(result.data)
 
             # Persist the tool call to the session JSONL so /resume can
@@ -165,7 +181,7 @@ async def run_tool_loop(
                     summary=_tc_sum,
                 )
             except Exception:
-                pass
+                logger.exception("session log_tool_call failed")
 
             # Wrap the payload in an untrusted envelope so a row value
             # like "ignore previous instructions" is received as DATA,

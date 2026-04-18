@@ -3,13 +3,41 @@
 from __future__ import annotations
 
 from payp import __version__
-from payp.cli.state import console, get_config
+from payp.cli.state import _state, console, get_config
 from payp.config import load_model_roles, load_models_config
 
 
+class _RowCountingFile:
+    """Wraps a file-like object and counts rows (newlines) written through it.
+
+    Used during welcome rendering to compute how many rows sit between the
+    future REPL prompt line and the banner's top row, so the background
+    BannerAnimator knows how many lines to cursor-up before redrawing.
+    """
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self.rows = 0
+
+    def write(self, s: str) -> int:
+        self.rows += s.count("\n")
+        return self._inner.write(s)
+
+    def flush(self) -> None:
+        self._inner.flush()
+
+    def isatty(self) -> bool:
+        return self._inner.isatty()
+
+    def fileno(self) -> int:
+        return self._inner.fileno()
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+
 def _show_welcome() -> None:
-    from payp.storage.snapshots import snapshot_count
-    from payp.ui.dashboard import render_compact_hint, render_status_dashboard
+    from payp.ui.dashboard import BannerAnimator
     from payp.ui.onboarding import (
         is_first_run,
         prompt_model_setup_only,
@@ -17,14 +45,30 @@ def _show_welcome() -> None:
         should_prompt_model_setup,
     )
 
-    # True first-run: no models AND no connections → full onboarding
     if is_first_run():
         run_onboarding(console)
         return
 
-    # Returning user but no model → prompt just for model
     if should_prompt_model_setup():
         prompt_model_setup_only(console)
+
+    original_file = console.file
+    counter = _RowCountingFile(original_file)
+    console.file = counter  # type: ignore[assignment]
+    try:
+        _render_welcome_body()
+    finally:
+        console.file = original_file  # type: ignore[assignment]
+
+    animator = BannerAnimator(console, rows_above=counter.rows)
+    if animator.start():
+        _state["banner_anim"] = animator
+
+
+def _render_welcome_body() -> None:
+    """Print the full welcome (dashboard, hint, docker suggestion, legacy notice)."""
+    from payp.storage.snapshots import snapshot_count
+    from payp.ui.dashboard import render_compact_hint, render_status_dashboard
 
     config = get_config()
 
@@ -58,9 +102,8 @@ def _show_welcome() -> None:
 
     render_compact_hint(console)
 
-    # Legacy knowledge dir notice — wording depends on whether migration
-    # has already happened. If global has data, the legacy dir is just dead
-    # weight and the message is softer.
+    _maybe_suggest_docker_scan()
+
     from payp.storage.knowledge import (
         get_knowledge_dir,
         has_legacy_knowledge,
@@ -76,6 +119,45 @@ def _show_welcome() -> None:
             )
         else:
             console.print(
-                "[yellow]⚠[/yellow] Found legacy [dim]./payp/knowledge/[/dim] — "
+                "[yellow]⚠[/yellow] Found legacy [dim]./payp/knowledge/[/dim] - "
                 "knowledge is now global. Run [bold]/knowledge migrate-legacy[/bold] to move it."
             )
+
+
+def _maybe_suggest_docker_scan() -> None:
+    """If the user has no saved connections, offer to import one from Docker.
+
+    Runs `docker ps` with a short timeout; silently no-ops when docker is
+    missing, the daemon is down, or no DB containers are running.
+    """
+    from payp.cli.runtime import _run_async
+    from payp.config import list_connections
+
+    if list_connections():
+        return
+
+    try:
+        from payp.db.docker_scan import list_db_containers
+        detected = _run_async(list_db_containers(timeout=0.8))
+    except Exception:
+        return
+    if not detected:
+        return
+
+    from payp.ui.theme import Color
+
+    console.print(
+        f"\n[{Color.BRAND}]Found database containers running in Docker:[/{Color.BRAND}]"
+    )
+    for i, d in enumerate(detected, 1):
+        auth = "[dim](pw from env)[/dim]" if d.password else "[dim](no pw in env)[/dim]"
+        console.print(
+            f"  [dim]{i}.[/dim] [bold]{d.container_name}[/bold] "
+            f"[dim]({d.db_type.value}, {d.host}:{d.port}/{d.database})[/dim] {auth}"
+        )
+    console.print(
+        f"\n[dim]Run [/dim][{Color.BRAND_ALT}]/db scan docker[/{Color.BRAND_ALT}]"
+        f"[dim] to save one of these and connect, or [/dim]"
+        f"[{Color.BRAND_ALT}]/db[/{Color.BRAND_ALT}][dim] to configure manually.[/dim]"
+    )
+

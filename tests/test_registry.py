@@ -23,7 +23,8 @@ from payp.tools.registry import (
 
 # Pin the expected total so adding/removing a tool without updating here
 # fails loudly. Bump when intentionally changing the catalog.
-EXPECTED_BASE_TOTAL = 35
+# 28 after merging 5 knowledge tools → `knowledge` and 4 snapshot tools → `snapshots`.
+EXPECTED_BASE_TOTAL = 28
 
 
 def test_base_registry_has_all_tools():
@@ -45,13 +46,14 @@ def test_no_duplicate_tool_names():
 
 
 def test_cli_registry_hides_write_knowledge():
-    """CLI uses propose_knowledge → approval → save. Direct write is hidden."""
+    """CLI uses knowledge(action=propose) → approval → save. Direct
+    action=write is disabled on the merged tool's enum."""
     reg = build_cli_registry()
     names = {t.name for t in reg.all_tools()}
-    assert "write_knowledge" not in names
-    assert "propose_knowledge" in names
-    assert "read_knowledge" in names
-    assert "search_knowledge" in names
+    assert "knowledge" in names
+    actions = reg.get("knowledge").get_parameters_schema()["properties"]["action"]["enum"]
+    assert "write" not in actions
+    assert {"read", "search", "list", "propose"}.issubset(actions)
 
 
 def test_cli_registry_has_cleanup_and_skills():
@@ -102,13 +104,13 @@ def test_mcp_allow_code_exec_exposes_code_tools():
 
 
 def test_mcp_exposes_write_knowledge_directly():
-    """MCP has no propose/approve UI — write_knowledge IS exposed."""
+    """MCP has no propose/approve UI — knowledge(action=write) IS enabled
+    on the merged tool's schema."""
     reg = build_mcp_registry()
     names = {t.name for t in reg.all_tools()}
-    assert "write_knowledge" in names
-    assert "read_knowledge" in names
-    assert "list_knowledge" in names
-    assert "search_knowledge" in names
+    assert "knowledge" in names
+    actions = reg.get("knowledge").get_parameters_schema()["properties"]["action"]["enum"]
+    assert {"read", "search", "list", "propose", "write"}.issubset(actions)
 
 
 def test_mcp_exposes_core_db_tools():
@@ -121,8 +123,7 @@ def test_mcp_exposes_core_db_tools():
         "schema_search",
         "check_cascade",
         "table_stats",
-        "snapshot_before_delete",
-        "restore_snapshot",
+        "snapshots",
         "export_query",
         "compare_schemas",
         "compare_data",

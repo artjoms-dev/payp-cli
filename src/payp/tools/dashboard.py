@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from typing import Any
 
@@ -24,10 +25,13 @@ from payp.ui.charts import (
     render_stacked_bar,
 )
 
+logger = logging.getLogger(__name__)
+
 VALID_LAYOUTS = {"2x2", "1x3", "2x3", "3x2"}
 
 
 class DashboardTool(BaseTool):
+    tier = "advanced"
     name = "dashboard"
     description = (
         "Build an interactive grid dashboard from multiple SQL queries. "
@@ -102,6 +106,7 @@ class DashboardTool(BaseTool):
             try:
                 rows = await conn.execute_raw(sql)
             except Exception as e:
+                logger.exception("DashboardTool query failed")
                 rendered.append({
                     "title": p_title,
                     "content": f"[red]Query failed:[/red]\n{e}",
@@ -119,6 +124,7 @@ class DashboardTool(BaseTool):
             try:
                 content = _render_panel_content(rows, chart_type, p_title)
             except Exception as e:
+                logger.exception("DashboardTool render failed")
                 content = f"[red]Render failed:[/red] {e}"
                 errors.append(f"Panel {idx + 1}: render {e}")
 
@@ -129,6 +135,7 @@ class DashboardTool(BaseTool):
             from payp.ui.dashboard_tui import run_dashboard
             run_dashboard(panels=rendered, layout=layout, title=title)
         except Exception as e:
+            logger.exception("DashboardTool TUI launch failed")
             return ToolResult(
                 success=False,
                 error=f"Dashboard TUI failed: {e}",

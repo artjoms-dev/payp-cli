@@ -41,6 +41,7 @@ dependencies = [
     "openpyxl>=3.1",
     "pyarrow>=15.0",
     "motor>=3.3",
+    "pyfiglet>=1.0",
 ]
 
 [project.optional-dependencies]

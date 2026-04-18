@@ -1,6 +1,6 @@
 """Dynamic system prompt builder for payp.
 
-Assembles 8 sections based on current state:
+Assembles 7 sections based on current state:
 1. Identity & Role (static)
 2. Capabilities & Constraints (static)
 3. Security Mode (dynamic — based on current /mode)
@@ -13,10 +13,61 @@ Assembles 8 sections based on current state:
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 from payp.models import SchemaCatalog, SchemaGraph, SchemaIndex, SecurityMode
+
+
+@dataclass
+class SystemPrompt:
+    """System prompt split into a static prefix and a dynamic suffix.
+
+    The static prefix is byte-identical across turns of a session and is
+    what Anthropic prompt caching marks with ``cache_control``. The
+    dynamic suffix changes per turn (active connection, schema context,
+    knowledge, skills).
+
+    Behaves like a string via ``__str__`` / ``__contains__`` so existing
+    call sites and tests that do ``"foo" in prompt`` keep working.
+    """
+
+    static: str
+    dynamic: str
+
+    def __str__(self) -> str:
+        if self.dynamic:
+            return f"{self.static}\n\n{self.dynamic}"
+        return self.static
+
+    def __contains__(self, item: object) -> bool:
+        return isinstance(item, str) and item in str(self)
+
+    def __bool__(self) -> bool:
+        return bool(self.static) or bool(self.dynamic)
+
+    def find(self, sub: str) -> int:
+        return str(self).find(sub)
+
+    def lower(self) -> str:
+        return str(self).lower()
+
+    def upper(self) -> str:
+        return str(self).upper()
+
+    def split(self, *args: Any, **kwargs: Any) -> list[str]:
+        return str(self).split(*args, **kwargs)
+
+    def __len__(self) -> int:
+        return len(str(self))
+
+    @property
+    def combined(self) -> str:
+        return str(self)
 
 # Forward reference to avoid circular import at module load
 if False:  # TYPE_CHECKING-equivalent without importing typing
@@ -116,30 +167,18 @@ Only call read_knowledge for tables that are NOT in the inlined knowledge block.
 The knowledge base may contain business logic, enum values, NULL semantics, valid filters, \
 and KNOWN TOTALS/COUNTS — prefer citing a known count from knowledge over re-running \
 `SELECT COUNT(*)` unless the user explicitly asked for a fresh number.
-- Use search_knowledge to find knowledge across all tables when looking for a concept or pattern \
-(e.g., 'timezone handling', 'soft delete pattern', 'status enum values').
+- Use `knowledge(action="search", query=...)` to find context across all tables when looking for a \
+concept or pattern (e.g., 'timezone handling', 'soft delete pattern', 'status enum values').
 - When the user asks to CLEAN UP, PURGE, REMOVE OLD, or FREE SPACE (sessions, queries, cache, \
-snapshots, exports), use the `cleanup` tool with an explicit `target` and filter arguments. \
-Examples:
-    cleanup(target="sessions", empty=true, reason="...")            — default: stubs only
-    cleanup(target="sessions", all=true, reason="...")              — wipe EVERYTHING (active session protected)
-    cleanup(target="sessions", older_than_days=7, keep_last=10, reason="...")
-    cleanup(target="cache", connection="test-pg", reason="...")
-    cleanup(target="snapshots", older_than_days=14, keep_last=5, reason="...")
-    cleanup(target="legacy_knowledge", reason="user asked to remove legacy knowledge dir")
-  When the user says "legacy knowledge", "old knowledge dir", or references the legacy \
-  banner on startup, use target="legacy_knowledge". The tool will refuse if migration \
-  hasn't happened yet — pass `force=true` only if the user explicitly wants to delete unmigrated data.
-  Set `all=true` when the user says "all", "everything", "wipe", "clear", or "force cleanup". \
-  ALWAYS set the `reason` field so the user sees why in the approval panel. \
-  Cleanup is destructive but is automatically gated by a user approval step — you cannot delete \
-  silently. Never try to clean up via execute_shell (rm -rf) — always use the cleanup tool.
-- ALWAYS use the schema_lookup tool BEFORE writing any INSERT, UPDATE, DELETE, or DDL query. \
-Never guess column names — check first.
+snapshots, exports), use the `cleanup` tool with an explicit `target` and `reason`. \
+Set `all=true` when the user says "all", "everything", "wipe", or "force cleanup". \
+When the user says "legacy knowledge", use target="legacy_knowledge".
+- BEFORE writing INSERT, UPDATE, DELETE, or DDL: check column names in the Schema Context above first. \
+Only call schema_lookup if the table is NOT already shown in the Schema Context.
 - When you discover NEW facts about a table during work (enum values like status 1=pending, \
-NULL meanings, filter rules, FK business logic, data quality quirks), call propose_knowledge to \
-suggest adding it to the knowledge base. The USER will approve, edit, or reject before saving. \
-NEVER save knowledge silently — always propose first.
+NULL meanings, filter rules, FK business logic, data quality quirks), call \
+`knowledge(action="propose", table=..., discovery=...)` to suggest adding it to the knowledge base. \
+The USER will approve, edit, or reject before saving. NEVER save knowledge silently — always propose first.
 - BEFORE INSERTing rows with foreign keys, query the referenced table to see what IDs actually \
 exist. Example: before INSERTing into orders with customer_id=1, run \
 `SELECT id FROM customers FETCH FIRST 10 ROWS ONLY` (dialect-correct) to see real IDs. \
@@ -147,14 +186,10 @@ DIFFERENT DATABASES HAVE DIFFERENT DATA — prod-pg customers may have ids 1-30 
 oracle-dwh customers have ids 41-60. Never assume IDs exist — verify.
 - If you get ORA-02291 / FK violation / constraint error on INSERT: immediately query the \
 referenced table to find valid IDs, then retry with correct values. DO NOT stop or ask user.
-- Before any DELETE, ALWAYS run the check_cascade tool first. \
-If CASCADE relationships exist, you MUST warn the user clearly: \
-"WARNING: This will CASCADE-delete data from [table1] (X rows), [table2] (Y rows), etc." \
-List EVERY affected table with row counts. Ask for explicit confirmation.
-- Before any DELETE or UPDATE, ALWAYS run snapshot_before_delete for EACH table that will \
-be affected (including cascade targets). For example, if deleting from customers will cascade \
-to orders, order_items, and payments — snapshot ALL FOUR tables before executing. \
-This ensures complete restoration is possible.
+- Before any DELETE or UPDATE:
+  1. Run check_cascade to identify cascading FKs. If CASCADE exists, warn the user with affected tables and row counts.
+  2. Run `snapshots(action="create", table=..., operation="DELETE|UPDATE", where_clause=...)` for EACH affected table (including cascade targets).
+  3. Then execute_sql (approval is automatic in MANUAL/SECURE modes).
 - Never execute destructive operations without showing them first (unless YOLO mode)
 - Never expose credentials or connection secrets in output
 - Never modify databases the user hasn't explicitly connected to
@@ -204,28 +239,6 @@ YOUR JOB: Call execute_sql. Do NOT ask for permission in text. \
 SELECTs execute without review.\
 """,
 }
-
-# --- Section 8: Snapshots ---
-
-SNAPSHOTS = """\
-## Snapshots
-Snapshots are JSONL backup files saved in ./payp/snapshots/ before DELETE/UPDATE operations.
-They are LOCAL FILES — not in the database. Managed via tools, not SQL.
-
-Available snapshot tools:
-- snapshot_before_delete: create a snapshot BEFORE destructive DML
-- list_snapshots: list all snapshots with metadata (filter by table/operation)
-- delete_snapshot: delete specific snapshot file(s) by path
-- restore_snapshot: restore data from a snapshot file
-
-Snapshots persist between sessions and are never auto-deleted.
-
-When user asks about snapshots (list, clean up, delete, restore):
-- Use list_snapshots first to see what exists
-- Use delete_snapshot to remove specific files (pass file paths from list_snapshots)
-- Use restore_snapshot to bring data back
-- NEVER use execute_sql for snapshot management — snapshots are files, not DB rows\
-"""
 
 # --- Section 9: Error Recovery ---
 
@@ -433,34 +446,44 @@ def build_system_prompt(
     knowledge_dir: Path | None = None,
     active_connections: list[dict] | None = None,
     skills: list[Any] | None = None,
-) -> str:
-    """Assemble the full system prompt from all sections."""
-    sections = []
+    schema_budget: int = 10000,
+    advanced_tool_names: list[str] | None = None,
+) -> SystemPrompt:
+    """Assemble the system prompt, split into static prefix + dynamic suffix.
+
+    Static bucket (byte-identical across turns, eligible for Anthropic
+    prompt caching): identity, capabilities, tool-output isolation, the
+    security-mode copy for the current mode, and error recovery.
+    Dialect hard rules live in execute_sql's tool description (see
+    payp.tools.query.QueryTool) — they would otherwise belong to the
+    static bucket too.
+
+    Dynamic bucket (changes per turn): active connection header,
+    multi-conn list, schema context (T0/T1/FK/T2), knowledge base,
+    skills, and advanced-tool pointers.
+    """
+    static_sections: list[str] = []
+    dynamic_sections: list[str] = []
 
     # 1. Identity
-    sections.append(IDENTITY)
+    static_sections.append(IDENTITY)
 
     # 2. Capabilities
-    sections.append(CAPABILITIES)
-    sections.append(TOOL_OUTPUT_ISOLATION)
+    static_sections.append(CAPABILITIES)
+    static_sections.append(TOOL_OUTPUT_ISOLATION)
 
     # 3. Security mode
-    sections.append(SECURITY_MODES.get(mode, SECURITY_MODES[SecurityMode.MANUAL]))
+    static_sections.append(SECURITY_MODES.get(mode, SECURITY_MODES[SecurityMode.MANUAL]))
 
-    # 4. Connection context with STRONG dialect-specific rules
+    # 4. Connection context — dialect hard rules live in execute_sql's
+    # tool description (see payp.tools.query.QueryTool), not here.
     if connection_name and db_version:
-        dialect_rules = _dialect_rules_for(db_type)
-        conn_section = f"""\
-## Active Connection: {connection_name} ({db_version})
-Database dialect: {db_type.upper()}
-
-### CRITICAL — {db_type.upper()} SQL SYNTAX RULES
-{dialect_rules}
-
-You MUST use {db_type.upper()}-specific syntax. If you use the wrong dialect, queries WILL fail."""
-        sections.append(conn_section)
+        dynamic_sections.append(
+            f"## Active Connection: {connection_name} ({db_version})\n"
+            f"Database dialect: {db_type.upper()}"
+        )
     else:
-        sections.append("""\
+        dynamic_sections.append("""\
 ## No Active Connection
 You are NOT connected to any database. If the user asks about data, tables, or \
 wants to run queries, tell them clearly: "No database connected. Run /db to connect." \
@@ -468,9 +491,9 @@ Do not guess or pretend you can access data.""")
 
     # 4b. Active Connections list + Dialect Syntax Guide (when multi-DB)
     if active_connections and len(active_connections) > 1:
-        sections.append(_build_active_connections_section(active_connections))
+        dynamic_sections.append(_build_active_connections_section(active_connections))
 
-    # 5. Schema context
+    # 5. Schema context — budget-aware injection
     if t0 or t1:
         schema_parts = ["## Schema Context"]
         schema_parts.append(
@@ -479,29 +502,63 @@ Do not guess or pretend you can access data.""")
             "unless you need a table not shown here. When a skill says 'discover tables', "
             "check this section first."
         )
+        # T0 is always included (tiny)
         if t0:
             from payp.db.introspection import format_t0_for_context
             schema_parts.append(format_t0_for_context(t0))
-        if t1:
+
+        # Budget-aware: estimate tokens as chars/4, inject T1 then FK if they fit
+        budget_remaining = schema_budget
+        # Subtract what we already have
+        current_text = "\n".join(schema_parts)
+        budget_remaining -= len(current_text) // 4
+
+        t1_text = ""
+        if t1 and budget_remaining > 0:
             from payp.db.introspection import format_t1_for_context
-            schema_parts.append(format_t1_for_context(t1))
-        if fk_graph and fk_graph.edges:
+            t1_text = format_t1_for_context(t1)
+            t1_cost = len(t1_text) // 4
+            if t1_cost <= budget_remaining:
+                schema_parts.append(t1_text)
+                budget_remaining -= t1_cost
+            else:
+                # Truncate T1: include schemas that fit
+                schema_parts.append(
+                    f"(T1 table list truncated — {t1_cost:,} tokens exceeds "
+                    f"remaining budget of {budget_remaining:,}. "
+                    f"Use schema_search to find tables.)"
+                )
+                budget_remaining = 0
+
+        fk_text = ""
+        if fk_graph and fk_graph.edges and budget_remaining > 0:
             from payp.db.introspection import format_schema_graph_for_context
-            schema_parts.append(format_schema_graph_for_context(fk_graph))
+            fk_text = format_schema_graph_for_context(fk_graph)
+            fk_cost = len(fk_text) // 4
+            if fk_cost <= budget_remaining:
+                schema_parts.append(fk_text)
+                budget_remaining -= fk_cost
+            else:
+                schema_parts.append(
+                    f"(FK graph truncated — {len(fk_graph.edges):,} relationships. "
+                    f"Use schema_lookup to see FKs for specific tables.)"
+                )
+
         if t2_context:
             schema_parts.append("### Relevant Table Details (already loaded — DO NOT call schema_lookup or read_knowledge for these)")
             schema_parts.append(t2_context)
             schema_parts.append(
-                "\n**The DDL and Business Knowledge above are AUTHORITATIVE and RELIABLE.** "
-                "Use them directly. Only call schema_lookup if you need a DIFFERENT table "
-                "not shown above, and only call read_knowledge for tables whose business "
-                "knowledge is NOT already inlined above."
+                "\n**The DDL and knowledge above are authoritative.** "
+                "Only call schema_lookup or read_knowledge for tables NOT shown above."
             )
-        sections.append("\n".join(schema_parts))
+        dynamic_sections.append("\n".join(schema_parts))
 
-    # 6. Knowledge base — project-local (./payp/knowledge/) takes precedence over global
+    # 6. Knowledge base — list filenames only; contents fetched on demand
+    # via the `knowledge` tool (action="read" / "search"). Inlining every
+    # .md every turn costs thousands of tokens even when the user's
+    # request has nothing to do with business context.
     from payp.config import project_knowledge_dir
-    knowledge_parts = ["## Business Context"]
+    kb_names: list[str] = []
     seen: set[str] = set()
     for src_dir in (project_knowledge_dir(), knowledge_dir):
         if src_dir and src_dir.is_dir():
@@ -509,46 +566,44 @@ Do not guess or pretend you can access data.""")
                 if f.name in seen:
                     continue
                 seen.add(f.name)
-                try:
-                    content = f.read_text(encoding="utf-8").strip()
-                    if content:
-                        knowledge_parts.append(f"### {f.stem}")
-                        knowledge_parts.append(content)
-                except Exception:
-                    pass
-    if len(knowledge_parts) > 1:
-        sections.append("\n".join(knowledge_parts))
+                kb_names.append(f.stem)
+    if kb_names:
+        dynamic_sections.append(
+            "## Business Context (available on demand)\n"
+            "Knowledge files exist for: " + ", ".join(f"`{n}`" for n in kb_names) + ".\n"
+            "Call `knowledge` with `action=\"search\"` for a cross-file lookup, "
+            "or `action=\"read\"` with a specific `table` name, to pull the content you need. "
+            "Do NOT guess business meaning — fetch it."
+        )
 
     # 7. Tools are added separately via tool definitions, not in prompt text
 
-    # 7b. Available Skills (one-liners only — full body fetched via invoke_skill)
+    # 7b. Available Skills — pointer only (full list fetched via list_skills)
     if skills:
-        skill_lines = [
-            "## Available Skills",
-            "Skills are pre-defined workflows for common database tasks. "
-            "When the user's request matches a skill's `when_to_use`, call the "
-            "`invoke_skill` tool with the skill's name to load its full workflow, "
-            "then follow the returned instructions using your normal tools.",
-            "",
-        ]
-        for s in skills:
-            name = getattr(s, "name", "")
-            desc = getattr(s, "description", "")
-            when = getattr(s, "when_to_use", "")
-            skill_lines.append(f"- **{name}** — {desc}")
-            skill_lines.append(f"    when_to_use: {when}")
-        skill_lines.append("")
-        skill_lines.append(
-            "Call `list_skills` to browse all skills, or `invoke_skill(skill_name=..., "
-            "user_context=...)` to activate one. Skills return text instructions — "
-            "they do NOT bypass security modes."
+        dynamic_sections.append(
+            "## Available Skills\n"
+            "Pre-defined workflows exist for common database tasks "
+            "(schema audits, migrations, ETL checks, and more). "
+            "Call `list_skills` to see what's available and what each one is for; "
+            "call `invoke_skill(skill_name=..., user_context=...)` to load a specific "
+            "one. Do this whenever the user's request sounds procedural or resembles "
+            "a recurring operation. Skills return text instructions — they do NOT "
+            "bypass security modes."
         )
-        sections.append("\n".join(skill_lines))
 
-    # 8. Snapshots
-    sections.append(SNAPSHOTS)
+    # 7c. Advanced tools (names only — LLM can request full definitions)
+    if advanced_tool_names:
+        dynamic_sections.append(
+            "## Additional Tools\n"
+            "These tools are available but not loaded by default. "
+            "Mention the tool name in your response and it will be activated for the next turn:\n"
+            + ", ".join(advanced_tool_names)
+        )
 
-    # 9. Error recovery
-    sections.append(ERROR_RECOVERY)
+    # 8. Error recovery (static)
+    static_sections.append(ERROR_RECOVERY)
 
-    return "\n\n".join(sections)
+    return SystemPrompt(
+        static="\n\n".join(static_sections),
+        dynamic="\n\n".join(dynamic_sections),
+    )

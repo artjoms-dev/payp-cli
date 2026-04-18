@@ -7,10 +7,15 @@ for switching backends mid-session and migrating data between them.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from payp.memory.interface import MemoryBackend
 from payp.models import MemoryConfig
+
+logger = logging.getLogger(__name__)
 
 _current_backend: MemoryBackend | None = None
 
@@ -110,10 +115,6 @@ def _create_backend(config: MemoryConfig, *, raise_on_failure: bool = False) -> 
     By default, falls back to native if mempalace is unavailable.
     Set raise_on_failure=True (used by switch_backend) to raise instead.
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     if config.backend == "mempalace":
         try:
             from payp.memory.mempalace_bridge import MemPalaceBackend
@@ -125,13 +126,13 @@ def _create_backend(config: MemoryConfig, *, raise_on_failure: bool = False) -> 
                     "Then retry:       /memory switch mempalace"
                 )
             logger.warning(
-                "mempalace configured but not installed — falling back to native. "
+                "mempalace configured but not installed - falling back to native. "
                 "Install with: pip install mempalace"
             )
         except Exception as exc:
             if raise_on_failure:
                 raise
-            logger.warning("mempalace init failed (%s) — falling back to native.", exc)
+            logger.exception("mempalace init failed - falling back to native.")
         else:
             return MemPalaceBackend(palace_dir=config.mempalace_dir)
 
@@ -261,8 +262,8 @@ async def import_knowledge(
                         existed = await backend.delete(conn_name, table_name)
                         if existed:
                             replaced += 1
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Memory backend error: %s", e)
                 await backend.save(conn_name, table_name, content, section="business_logic")
                 imported += 1
             except Exception as exc:

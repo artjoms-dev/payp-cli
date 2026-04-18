@@ -19,6 +19,7 @@ def list_help_topics() -> list[str]:
 
 class PaypHelpTool(BaseTool):
     name = "payp_help"
+    tier = "advanced"
     description = (
         "Read payp's internal help documentation. "
         "Use this when the user asks HOW to use payp itself (not their database) — "

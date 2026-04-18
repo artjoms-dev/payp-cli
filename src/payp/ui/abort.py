@@ -2,23 +2,36 @@
 
 Watches stdin in a non-blocking way; when the user presses Esc or 'q',
 a shared asyncio.Event is set. Callers check/await the event to abort.
+
+On Windows `termios`/`tty` don't exist and `select` can't poll stdin, so
+the whole watcher downgrades to a no-op context manager. Ctrl+C remains
+the cancellation path, matching the native Windows convention.
 """
 
 from __future__ import annotations
 
 import asyncio
-import select
 import sys
-import termios
-import tty
 from collections.abc import Iterator
 from contextlib import contextmanager
+
+_IS_WINDOWS = sys.platform == "win32"
+_POSIX = not _IS_WINDOWS
+
+if _POSIX:
+    import select
+    import termios
+    import tty
+
+
+def _can_raw_stdin() -> bool:
+    return _POSIX and sys.stdin.isatty()
 
 
 @contextmanager
 def _raw_stdin() -> Iterator[None]:
     """Temporarily put stdin in raw mode so we can read single keypresses."""
-    if not sys.stdin.isatty():
+    if not _can_raw_stdin():
         yield
         return
     fd = sys.stdin.fileno()
@@ -42,12 +55,16 @@ class AbortWatcher:
         self._task: asyncio.Task | None = None
         self._stop_flag = False
         self._paused = False
+        self._raw_ctx = None
+        self._enabled = _can_raw_stdin()
 
     def pause(self) -> None:
         """Pause stdin polling + restore cooked mode so nested UIs can read input."""
+        if not self._enabled:
+            return
         self._paused = True
         # Restore cooked mode so prompt_toolkit apps can take over stdin cleanly
-        if hasattr(self, "_raw_ctx") and self._raw_ctx is not None:
+        if self._raw_ctx is not None:
             try:
                 self._raw_ctx.__exit__(None, None, None)
             except Exception:
@@ -56,16 +73,26 @@ class AbortWatcher:
 
     def resume(self) -> None:
         """Resume stdin polling + drain any buffered bytes to avoid stale triggers."""
+        if not self._enabled:
+            return
         # Drain stdin buffer (clear any stray bytes from nested UI)
         if sys.stdin.isatty():
-            try:
-                while True:
-                    r, _, _ = select.select([sys.stdin], [], [], 0)
-                    if not r:
-                        break
-                    sys.stdin.read(1)
-            except Exception:
-                pass
+            if _IS_WINDOWS:
+                import msvcrt
+                try:
+                    while msvcrt.kbhit():
+                        msvcrt.getch()
+                except Exception:
+                    pass
+            else:
+                try:
+                    while True:
+                        r, _, _ = select.select([sys.stdin], [], [], 0)
+                        if not r:
+                            break
+                        sys.stdin.read(1)
+                except Exception:
+                    pass
         # Re-enter raw mode
         self._raw_ctx = _raw_stdin()
         self._raw_ctx.__enter__()
@@ -84,7 +111,16 @@ class AbortWatcher:
 
     def _poll_stdin(self) -> bool:
         """Return True if Esc/q was pressed."""
-        if not sys.stdin.isatty() or self._paused:
+        if not self._enabled or not sys.stdin.isatty() or self._paused:
+            return False
+        if _IS_WINDOWS:
+            import msvcrt
+            if msvcrt.kbhit():
+                try:
+                    ch = msvcrt.getch().decode("utf-8", errors="ignore")
+                except Exception:
+                    return False
+                return ch in ("\x1b", "q", "Q")
             return False
         r, _, _ = select.select([sys.stdin], [], [], 0.2)
         if r and not self._paused:
@@ -98,6 +134,11 @@ class AbortWatcher:
 
     async def __aenter__(self) -> AbortWatcher:
         self._stop_flag = False
+        if not self._enabled:
+            # Windows or non-tty: the watcher is inert. Ctrl+C stays the
+            # only cancellation path, and the surrounding chat flow keeps
+            # working without a background stdin poller.
+            return self
         self._raw_ctx = _raw_stdin()
         self._raw_ctx.__enter__()
         self._task = asyncio.create_task(self._watch())
@@ -111,7 +152,9 @@ class AbortWatcher:
                 await self._task
             except (asyncio.CancelledError, Exception):
                 pass
-        self._raw_ctx.__exit__(None, None, None)
+        if self._raw_ctx is not None:
+            self._raw_ctx.__exit__(None, None, None)
+            self._raw_ctx = None
 
     @property
     def aborted(self) -> bool:

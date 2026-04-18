@@ -25,6 +25,7 @@ class ConnectionState:
     manager: ConnectionManager
     t0: SchemaIndex | None = None
     t1: SchemaCatalog | None = None
+    last_select: dict | None = None
 
 
 class MultiConnectionManager:
@@ -109,6 +110,17 @@ class MultiConnectionManager:
             return False
         self._active = name
         return True
+
+    def set_last_select(self, data: dict | None) -> None:
+        """Store pagination state for the active connection."""
+        if self._active and self._active in self._connections:
+            self._connections[self._active].last_select = data
+
+    def get_last_select(self) -> dict | None:
+        """Get pagination state for the active connection."""
+        if self._active and self._active in self._connections:
+            return self._connections[self._active].last_select
+        return None
 
     def set_schemas(self, name: str, t0: SchemaIndex, t1: SchemaCatalog) -> None:
         """Store cached schema for a connection."""

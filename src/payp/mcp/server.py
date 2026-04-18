@@ -46,10 +46,11 @@ from payp.models import SecurityMode
 from payp.tools.base import ToolResult
 
 # --- logging: always stderr for stdio MCP servers ---
+log_level = logging.DEBUG if os.environ.get("PAYP_DEBUG") else logging.INFO
 logging.basicConfig(
-    level=logging.INFO,
-    stream=sys.stderr,
+    level=log_level,
     format="[payp-mcp] %(levelname)s %(name)s: %(message)s",
+    stream=sys.stderr,
 )
 logger = logging.getLogger("payp.mcp")
 
@@ -288,17 +289,17 @@ def build_server(state: ServerState | None = None) -> tuple[Server, ServerState]
         if tool is None:
             return error_content(f"Unknown tool: {name}")
 
-        # Tools that need a DB connection
+        # Tools that need a DB connection. `snapshots` covers the merged
+        # create/list/restore/delete snapshot operations. `list` alone
+        # doesn't strictly need a connection but the tool errors clearly
+        # if disconnected, so keeping it here is fine.
         needs_db = name in {
             "execute_sql",
             "explain_query",
             "schema_lookup",
             "schema_search",
             "check_cascade",
-            "snapshot_before_delete",
-            "restore_snapshot",
-            "list_snapshots",
-            "delete_snapshot",
+            "snapshots",
             "export_query",
         }
         if needs_db and (

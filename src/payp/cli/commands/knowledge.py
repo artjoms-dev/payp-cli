@@ -44,7 +44,8 @@ def _cmd_knowledge(args: str = "") -> None:
         try:
             result = _run_async(export_knowledge(target, connection=conn_arg))
         except Exception as e:
-            console.print(f"[red]Export failed: {e}[/red]")
+            from payp.ui.errors import show_error
+            show_error("Export failed", str(e), exc=e, logger_name="payp.cli.commands.knowledge")
             return
         target_abs = Path(result["target"])
         console.print(
@@ -79,7 +80,8 @@ def _cmd_knowledge(args: str = "") -> None:
         try:
             result = _run_async(import_knowledge(path_arg, connection=conn_arg))
         except Exception as e:
-            console.print(f"[red]Import failed: {e}[/red]")
+            from payp.ui.errors import show_error
+            show_error("Import failed", str(e), exc=e, logger_name="payp.cli.commands.knowledge")
             return
         msg = (
             f"[green]✓[/green] Imported [bold]{result['imported']}[/bold] "
@@ -123,7 +125,11 @@ def _cmd_knowledge(args: str = "") -> None:
     try:
         entries = _run_async(backend.list_all(connection=active_conn))
     except Exception as e:
-        console.print(f"[red]Failed to list knowledge: {e}[/red]")
+        from payp.ui.errors import show_error
+        show_error(
+            "Failed to list knowledge", str(e), exc=e,
+            logger_name="payp.cli.commands.knowledge",
+        )
         return
 
     if not entries:
@@ -192,7 +198,8 @@ def _cmd_knowledge(args: str = "") -> None:
         try:
             content = _run_async(backend.read(conn, table))
         except Exception as ex:
-            console.print(f"[red]Read failed: {ex}[/red]")
+            from payp.ui.errors import show_error
+            show_error("Read failed", str(ex), exc=ex, logger_name="payp.cli.commands.knowledge")
             return
         if content:
             from rich.markdown import Markdown

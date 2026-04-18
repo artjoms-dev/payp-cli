@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import logging
+from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 from payp.cli.runtime import (
     _run_async,
@@ -15,6 +18,28 @@ from payp.cli.runtime import (
 )
 from payp.cli.state import _state, console
 
+if TYPE_CHECKING:
+    from payp.db.docker_scan import DetectedDb
+
+
+def _db_connection_completions() -> tuple[tuple[str, str], ...]:
+    """Return saved connections as (name, meta) pairs for autocomplete."""
+    from payp.config import list_connections, load_connection_profile
+
+    connections = list_connections()
+    if not connections:
+        return ()
+    result: list[tuple[str, str]] = []
+    for i, name in enumerate(connections, 1):
+        profile = load_connection_profile(name)
+        if profile:
+            p = profile
+            meta = f"[{i}] {p.db_type.value} @ {p.host}:{p.port}/{p.database}"
+        else:
+            meta = f"[{i}] saved connection"
+        result.append((name, meta))
+    return tuple(result)
+
 
 def _cmd_db(args: str) -> None:
     """Manage database connections."""
@@ -22,6 +47,17 @@ def _cmd_db(args: str) -> None:
 
     from payp.config import list_connections, load_connection_profile, load_credential
     from payp.ui.theme import Color
+
+    args_stripped = args.strip()
+    if args_stripped.lower().startswith("scan"):
+        rest = args_stripped[4:].strip().lower()
+        if rest in ("", "docker"):
+            _scan_docker_and_prompt()
+            return
+        console.print(
+            f"[red]Unknown scan target '{rest}'. Try /db scan docker.[/red]"
+        )
+        return
 
     connections = list_connections()
 
@@ -67,13 +103,16 @@ def _cmd_db(args: str) -> None:
     console.print(table)
     console.print(
         f"\n[dim]Enter connection number, name, [/dim]"
-        f"[{Color.BRAND_ALT}]new[/{Color.BRAND_ALT}][dim] to add, or [/dim]"
+        f"[{Color.BRAND_ALT}]new[/{Color.BRAND_ALT}][dim] to add, [/dim]"
+        f"[{Color.BRAND_ALT}]scan[/{Color.BRAND_ALT}][dim] to detect Docker, or [/dim]"
         f"[red]del[/red][dim] to remove.[/dim]"
     )
 
-    # Build a single option map: digits, names (lower), "new", and "del" all
-    # map to the action we want to take. prompt_choice loops until one is picked.
-    options: dict[str, str] = {"new": "__new__", "del": "__del__"}
+    # Build a single option map: digits, names (lower), "new", "scan", "del"
+    # all map to the action we want to take. prompt_choice loops until valid.
+    options: dict[str, str] = {
+        "new": "__new__", "del": "__del__", "scan": "__scan__",
+    }
     for i, name in enumerate(connections, 1):
         options[str(i)] = name
         options[name.lower()] = name
@@ -83,6 +122,8 @@ def _cmd_db(args: str) -> None:
         _setup_new_connection()
     elif action == "__del__":
         _delete_connection()
+    elif action == "__scan__":
+        _scan_docker_and_prompt()
     else:
         _cmd_db(action)
 
@@ -165,6 +206,112 @@ def _setup_new_connection() -> None:
 
     console.print(f"\n[{Color.BRAND_ALT}]Connection '{conn_name}' saved.[/{Color.BRAND_ALT}]")
 
+    _run_async(_connect_to_db(conn_name, profile, credential))
+
+
+def _scan_docker_and_prompt() -> None:
+    """Scan Docker for DB containers and offer the user to save one."""
+    from rich.table import Table
+
+    from payp.db.docker_scan import list_db_containers
+    from payp.ui.theme import Color
+
+    with console.status("Scanning Docker for database containers..."):
+        detected = _run_async(list_db_containers())
+
+    if not detected:
+        console.print(
+            "[dim]No database containers detected on the local Docker daemon.[/dim]"
+        )
+        return
+
+    table = Table(title=f"[{Color.BRAND}]Docker Database Containers[/{Color.BRAND}]")
+    table.add_column("#", style="dim")
+    table.add_column("Container", style="bold")
+    table.add_column("Image")
+    table.add_column("Type")
+    table.add_column("Address")
+    table.add_column("Auth")
+    for i, d in enumerate(detected, 1):
+        address = f"{d.host}:{d.port}/{d.database}"
+        if d.password:
+            auth = f"{d.username or '-'} [dim](pw from env)[/dim]"
+        elif d.username:
+            auth = f"{d.username} [dim](no pw)[/dim]"
+        else:
+            auth = "[dim]none[/dim]"
+        table.add_row(str(i), d.container_name, d.image, d.db_type.value, address, auth)
+    console.print(table)
+    console.print(
+        "\n[dim]Enter container number to save and connect, or[/dim] "
+        "[red]n[/red][dim] to cancel.[/dim]"
+    )
+
+    options: dict[str, Any] = {"n": None, "no": None, "cancel": None}
+    for i, d in enumerate(detected, 1):
+        options[str(i)] = d
+    choice = prompt_choice("Select: ", options)
+    if choice is None:
+        console.print("[dim]Cancelled.[/dim]")
+        return
+    _save_detected_connection(choice)
+
+
+def _save_detected_connection(detected: DetectedDb) -> None:
+    """Persist a detected container as a named connection, then connect."""
+    from payp.config import list_connections, save_connection_profile, save_credential
+    from payp.models import ConnectionCredential, ConnectionProfile
+    from payp.ui.theme import Color
+
+    existing = set(list_connections())
+    default_name = detected.container_name
+    if default_name in existing:
+        i = 2
+        while f"{default_name}-{i}" in existing:
+            i += 1
+        default_name = f"{default_name}-{i}"
+
+    console.print(
+        f"\n[{Color.BRAND}]Save detected connection[/{Color.BRAND}] "
+        f"[dim]({detected.db_type.value} @ {detected.host}:{detected.port})[/dim]"
+    )
+    conn_name = prompt_required(
+        f"Connection name [{default_name}]: ", default=default_name
+    )
+
+    password: str | None = None
+    if detected.password:
+        console.print(
+            "[dim]A password was found in the container's env vars. "
+            "Saving it will write it to ~/.payp/connections/ (chmod 600).[/dim]"
+        )
+        if prompt_confirm("Use password from Docker env?", default=True):
+            password = detected.password
+        else:
+            pw = command_prompt("Password (empty to skip): ", is_password=True).strip()
+            password = pw or None
+    elif detected.username:
+        pw = command_prompt(
+            "Password (empty if the container uses trust auth): ", is_password=True,
+        ).strip()
+        password = pw or None
+
+    profile = ConnectionProfile(
+        name=conn_name,
+        db_type=detected.db_type,
+        host=detected.host,
+        port=detected.port,
+        database=detected.database,
+        username=detected.username,
+    )
+    credential = ConnectionCredential(password=password)
+
+    save_connection_profile(profile)
+    save_credential(conn_name, credential)
+
+    console.print(
+        f"\n[{Color.BRAND_ALT}]Connection '{conn_name}' saved.[/{Color.BRAND_ALT}]"
+    )
     _run_async(_connect_to_db(conn_name, profile, credential))
 
 
@@ -412,22 +559,15 @@ async def _connect_to_db(
             with console.status(f"Connecting to {name}..."):
                 version = await mgr.connect()
     except (ConnError, OSError, Exception) as e:
-        from rich.panel import Panel
+        from payp.ui.errors import show_error
+
         short_error = str(e).split(", full error:", 1)[0].strip()
-        body = (
-            f"[red]{short_error}[/red]\n\n"
-            "[yellow]Check host, port, credentials, and that the "
-            "database is reachable.[/yellow]"
-        )
-        console.print()
-        console.print(
-            Panel(
-                body,
-                title="[bold red]Connection failed[/bold red]",
-                border_style="red",
-                padding=(1, 2),
-                expand=True,
-            )
+        show_error(
+            "Connection failed",
+            f"Failed to connect to {name}: {short_error}",
+            exc=e,
+            hint="Check host, port, credentials, and that the database is reachable.",
+            logger_name="payp.db",
         )
         return
 
@@ -510,11 +650,10 @@ async def _connect_to_db(
             fk_graph = SchemaGraph()
         _state["fk_graph"] = fk_graph
     except Exception as e:
-        from rich.panel import Panel
+        from payp.ui.errors import show_error
         raw = str(e)
-        # MongoDB OperationFailure messages cram the human text and a
-        # "full error: {dict}" dump on one line. The dump is noise at
-        # the CLI level — trim it so the user sees just the sentence.
+        # MongoDB OperationFailure cramming "full error: {dict}" onto the same line
+        # is noise at the CLI level - keep only the sentence before it.
         short_error = raw.split(", full error:", 1)[0].strip()
 
         msg_lower = raw.lower()
@@ -527,32 +666,23 @@ async def _connect_to_db(
             hint = (
                 "The server rejected an unauthenticated request. "
                 "It looks like this database requires credentials.\n\n"
-                f"[dim]Next steps:[/dim]\n"
-                f"  • [bold]/credentials {name}[/bold] — add username and password\n"
-                "  • [bold]/db[/bold] -> [bold]new[/bold] — recreate with "
-                "authentication enabled"
+                f"Next steps:\n"
+                f"  - /credentials {name} to add username and password\n"
+                "  - /db -> new to recreate with authentication enabled"
             )
         else:
             hint = (
                 "The connection stayed open but schema metadata could "
-                "not be loaded.\n\n"
-                "[dim]Next step:[/dim] [bold]/schema --refresh[/bold] "
-                "once the underlying issue is resolved."
+                "not be loaded.\n"
+                "Next step: /schema --refresh once the underlying issue is resolved."
             )
 
-        body = (
-            f"[red]{short_error}[/red]\n\n"
-            f"[yellow]{hint}[/yellow]"
-        )
-        console.print()
-        console.print(
-            Panel(
-                body,
-                title="[bold red]Schema discovery failed[/bold red]",
-                border_style="red",
-                padding=(1, 2),
-                expand=True,
-            )
+        show_error(
+            "Schema discovery failed",
+            short_error,
+            exc=e,
+            hint=hint,
+            logger_name=__name__,
         )
         # Roll the half-initialised connection back so the user does not
         # end up chatting with a DB we could not introspect.
@@ -566,8 +696,8 @@ async def _connect_to_db(
         _state.pop("t1", None)
         try:
             await mgr.disconnect()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Disconnect during cleanup failed: %s", e)
         return
 
     mc = _state.get("multi_conn_manager")

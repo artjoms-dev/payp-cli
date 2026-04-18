@@ -51,13 +51,14 @@ class ModelProvider(BaseModel):
     api_key: str
     base_url: str | None = None
     default_model: str | None = None
+    api_version: str | None = None
 
 
 class ModelRoles(BaseModel):
     """Executor and reviewer model assignments."""
 
-    executor: str = "openrouter/google/gemma-4-26b-a4b-it:free"
-    reviewer: str | None = None  # None = no reviewer configured
+    executor: str = "openrouter/anthropic/claude-sonnet-4"
+    reviewer: str | None = None
 
 
 class MemoryConfig(BaseModel):
@@ -71,8 +72,10 @@ class AppConfig(BaseModel):
     """Global payp configuration."""
 
     default_mode: SecurityMode = SecurityMode.MANUAL
-    default_model: str = "openrouter/google/gemma-4-26b-a4b-it:free"
+    default_model: str = "openrouter/anthropic/claude-sonnet-4"
     theme: str = "default"
+    schema_budget: int = 10000
+    max_session_cost_usd: float | None = None  # None = no limit
     roles: ModelRoles = Field(default_factory=ModelRoles)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
 
@@ -124,3 +127,4 @@ class CostTracker(BaseModel):
     total_output_tokens: int = 0
     total_cost_usd: float = 0.0
     query_count: int = 0
+    last_input_tokens: int = 0  # most recent turn's input tokens (for context % display)

@@ -4,7 +4,7 @@ Houses _ensure_chat_session (rebuilds the ChatSession when connection or mode
 changes) and the session-log helpers (_log_db_connected_to_session,
 _log_memory_backend_to_session, _short).
 
-_interactive_loop lives here too — it is populated in dispatch.py's init
+_interactive_loop lives here too - it is populated in dispatch.py's init
 so that the completer and handler are available first. See dispatch.py.
 """
 
@@ -13,6 +13,16 @@ from __future__ import annotations
 from payp.cli.runtime import _run_async
 from payp.cli.state import _state, console, get_config
 from payp.config import load_models_config
+
+
+def _stop_banner_animator() -> None:
+    """Stop the welcome-banner shimmer thread if it is still running.
+
+    Pops the animator out of state so subsequent calls are no-ops.
+    """
+    anim = _state.pop("banner_anim", None)
+    if anim is not None:
+        anim.stop()
 
 
 def _ensure_chat_session() -> None:
@@ -109,6 +119,72 @@ def _log_memory_backend_to_session(backend_name: str) -> None:
         pass
 
 
+def _gather_status_inputs() -> tuple[str | None, int, float, int | None, str | None]:
+    """Snapshot model / tokens / cost / ctx% / connection for the status line.
+
+    Returned as a plain tuple so both the live toolbar and the post-turn Rich
+    footer can feed it through the same formatter (ui.status_bar). Any
+    missing piece (no model yet, no cost tracker, no ctx estimate) is
+    returned as None / 0 so the formatter can drop it cleanly.
+    """
+    from payp.config import load_model_roles
+
+    model: str | None = None
+    try:
+        model = load_model_roles().executor
+    except Exception:
+        pass
+
+    total_tok = 0
+    total_cost = 0.0
+    ctx_pct: int | None = None
+
+    client = _state.get("llm_client")
+    if client:
+        ct = client.cost_tracker
+        total_tok = ct.total_input_tokens + ct.total_output_tokens
+        total_cost = ct.total_cost_usd
+        if ct.last_input_tokens > 0:
+            try:
+                from payp.core.compaction import get_model_context_size
+                max_ctx = get_model_context_size(client.get_executor_model())
+                if max_ctx > 0:
+                    ctx_pct = int(ct.last_input_tokens / max_ctx * 100)
+            except Exception:
+                pass
+
+    return model, total_tok, total_cost, ctx_pct, _state.get("active_connection")
+
+
+def print_frozen_status_line() -> None:
+    """Rich-print the current status line once, just above the prompt.
+
+    Called from the main loop before each `session.prompt()` call. This is
+    the single source of status display — no prompt_toolkit bottom-toolbar,
+    no post-turn duplicate. The line stays in scrollback so streaming
+    output scrolls past it; the next prompt shows a fresh refreshed copy.
+    No-ops when no segments qualify (e.g. pre-first-response idle state
+    before any model is configured).
+    """
+    from payp.ui.status_bar import print_frozen_status
+
+    print_frozen_status(console, *_gather_status_inputs())
+
+
+def _build_prompt():  # -> FormattedText
+    """Build formatted prompt showing connected DB name in green."""
+    from prompt_toolkit.formatted_text import FormattedText
+
+    db = _state.get("active_connection")
+    if db:
+        return FormattedText([
+            ("", "payp "),
+            ("class:db", f"({db})"),
+            ("", " > "),
+        ])
+    return FormattedText([("", "payp> ")])
+
+
 def _interactive_loop() -> None:
     """Main interactive chat loop with LLM integration."""
     from prompt_toolkit import PromptSession
@@ -129,6 +205,7 @@ def _interactive_loop() -> None:
             "completion-menu.completion.current": "noinherit underline",
             "completion-menu.meta.completion": "noinherit #888888",
             "completion-menu.meta.completion.current": "noinherit #888888 underline",
+            "db": "#B4E04C",
         }),
     )
 
@@ -136,11 +213,18 @@ def _interactive_loop() -> None:
     _ensure_chat_session()
 
     while True:
+        # Single source of status — prints right above the prompt every
+        # iteration so it stays visible between turns and reflects the
+        # latest tokens / cost / ctx / connection after each response.
+        print_frozen_status_line()
         try:
-            user_input = session.prompt("payp> ").strip()
+            user_input = session.prompt(_build_prompt()).strip()
         except (EOFError, KeyboardInterrupt):
+            _stop_banner_animator()
             console.print("\n[dim]Goodbye![/dim]")
             break
+
+        _stop_banner_animator()
 
         if not user_input:
             continue
@@ -168,4 +252,16 @@ def _interactive_loop() -> None:
             except KeyboardInterrupt:
                 console.print("\n[dim]Cancelled.[/dim]")
             except Exception as e:
-                console.print(f"[red]Error: {e}[/red]")
+                from payp.ui.errors import show_error
+                short = str(e).strip() or type(e).__name__
+                show_error(
+                    "Couldn't process that input",
+                    short,
+                    exc=e,
+                    hint=(
+                        "Try /help for available commands, "
+                        "/models to configure the AI provider, "
+                        "or /db to check your database connection."
+                    ),
+                    logger_name="payp.chat",
+                )

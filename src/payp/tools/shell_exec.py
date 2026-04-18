@@ -11,11 +11,17 @@ Runs shell commands in a subprocess for:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
+_IS_WINDOWS = sys.platform == "win32"
+
 from payp.tools.base import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 30
 MAX_OUTPUT = 50_000
@@ -23,8 +29,9 @@ MAX_OUTPUT = 50_000
 
 class ShellExecTool(BaseTool):
     name = "execute_shell"
+    tier = "advanced"
     description = (
-        "Execute a shell command via /bin/sh -c in the current working directory. "
+        "Execute a shell command via the system shell (cmd.exe on Windows, /bin/sh on Unix) in the current working directory. "
         "Use for: git operations, pg_dump/mysqldump backups, curl/wget HTTP calls, "
         "aws/gcloud/kubectl/docker CLIs, file system utilities. "
         "Supports pipes, redirects, and environment variables. "
@@ -42,8 +49,8 @@ class ShellExecTool(BaseTool):
                 "command": {
                     "type": "string",
                     "description": (
-                        "Shell command to run (passed to /bin/sh -c). "
-                        "Supports pipes, redirects, env vars."
+                        "Shell command to run (passed to cmd.exe /c on Windows, "
+                        "/bin/sh -c on Unix). Supports pipes, redirects, env vars."
                     ),
                 },
                 "timeout": {
@@ -92,15 +99,19 @@ class ShellExecTool(BaseTool):
         timeout = min(int(args.get("timeout", DEFAULT_TIMEOUT)), 300)
 
         try:
+            if _IS_WINDOWS:
+                shell_cmd = ["cmd.exe", "/c", command]
+            else:
+                shell_cmd = ["/bin/sh", "-c", command]
+
             proc = await asyncio.create_subprocess_exec(
-                "/bin/sh",
-                "-c",
-                command,
+                *shell_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=Path.cwd(),
             )
         except Exception as e:
+            logger.exception("ShellExecTool spawn failed")
             return ToolResult(
                 success=False,
                 error=f"Failed to spawn shell: {e}",

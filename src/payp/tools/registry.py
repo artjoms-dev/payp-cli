@@ -21,13 +21,7 @@ from payp.tools.dashboard import DashboardTool
 from payp.tools.explain import ExplainTool
 from payp.tools.export import ExportTool
 from payp.tools.help_tool import PaypHelpTool
-from payp.tools.knowledge import (
-    ListKnowledgeTool,
-    ProposeKnowledgeTool,
-    ReadKnowledgeTool,
-    SearchKnowledgeTool,
-    WriteKnowledgeTool,
-)
+from payp.tools.knowledge import KnowledgeTool
 from payp.tools.python_exec import PythonExecTool
 from payp.tools.queries import (
     DeleteQueryTool,
@@ -44,12 +38,7 @@ from payp.tools.schema import (
 )
 from payp.tools.shell_exec import ShellExecTool
 from payp.tools.skills_tool import InvokeSkillTool, ListSkillsTool
-from payp.tools.snapshot import (
-    DeleteSnapshotTool,
-    ListSnapshotsTool,
-    RestoreSnapshotTool,
-    SnapshotBeforeDeleteTool,
-)
+from payp.tools.snapshot import SnapshotsTool
 from payp.tools.stats import StatsTool
 from payp.tools.web_fetch import WebFetchTool
 
@@ -65,12 +54,29 @@ CLI_ONLY_TOOLS: frozenset[str] = frozenset({
     "list_skills",
 })
 
+#: Names that used to be stand-alone tools and are now dispatched under a
+#: merged wrapper (`knowledge`, `snapshots`). Kept as a lookup so the MCP
+#: `needs_db` set, welcome banners, and any name-based check can be
+#: translated without touching every call site.
+MERGED_INTO: dict[str, str] = {
+    "read_knowledge": "knowledge",
+    "search_knowledge": "knowledge",
+    "list_knowledge": "knowledge",
+    "propose_knowledge": "knowledge",
+    "write_knowledge": "knowledge",
+    "snapshot_before_delete": "snapshots",
+    "list_snapshots": "snapshots",
+    "restore_snapshot": "snapshots",
+    "delete_snapshot": "snapshots",
+}
+
 #: Tools that rely on human-in-the-loop approval via the chat.py
 #: `_execute_destructive_with_approval` wrapper. The CLI shows a preview
 #: panel and waits for y/N. MCP has no equivalent yet (elicitation comes
 #: in Phase 2), so these are hidden by default over MCP.
 REQUIRES_INTERACTIVE_APPROVAL: frozenset[str] = frozenset({
-    "propose_knowledge",
+    # `knowledge(action="propose")` requires CLI approval; MCP uses
+    # action="write" directly instead (see KnowledgeTool.allow_write).
     "cleanup",
 })
 
@@ -104,20 +110,13 @@ def _all_tool_factories() -> list:
         SchemaSearchTool,
         CheckCascadeTool,
         StatsTool,
-        # Snapshots (pre-DML backups + rollback)
-        SnapshotBeforeDeleteTool,
-        RestoreSnapshotTool,
-        ListSnapshotsTool,
-        DeleteSnapshotTool,
+        # Snapshots (pre-DML backups + rollback) — merged into one tool
+        SnapshotsTool,
         # Export / help
         ExportTool,
         PaypHelpTool,
-        # Knowledge base
-        ReadKnowledgeTool,
-        ProposeKnowledgeTool,
-        WriteKnowledgeTool,
-        ListKnowledgeTool,
-        SearchKnowledgeTool,
+        # Knowledge base — merged into one tool
+        KnowledgeTool,
         # Query library
         SaveQueryTool,
         ListQueriesTool,
@@ -153,36 +152,50 @@ def _all_tool_factories() -> list:
 
 def build_base_registry(
     exclude: frozenset[str] | set[str] | None = None,
+    db_type: str = "postgresql",
+    allow_knowledge_write: bool = False,
 ) -> ToolRegistry:
     """Build a tool registry, optionally excluding tools by name.
 
     This is THE single registration point for all payp tools. Both
     `build_cli_registry()` and `build_mcp_registry()` delegate here.
+
+    `db_type` is threaded into tools whose description depends on the
+    active SQL dialect (currently `execute_sql` — see QueryTool).
+    `allow_knowledge_write` surfaces the `action="write"` branch on the
+    merged `KnowledgeTool`. CLI leaves it False so the approval flow
+    stays authoritative; MCP passes True because it has no UI.
     """
     reg = ToolRegistry()
     excluded = set(exclude or ())
     for factory in _all_tool_factories():
-        tool = factory()
+        if factory is QueryTool:
+            tool = factory(db_type=db_type)
+        elif factory is KnowledgeTool:
+            tool = factory(allow_write=allow_knowledge_write)
+        else:
+            tool = factory()
         if tool.name in excluded:
             continue
         reg.register(tool)
     return reg
 
 
-def build_cli_registry() -> ToolRegistry:
+def build_cli_registry(db_type: str = "postgresql") -> ToolRegistry:
     """Registry for the interactive CLI — all tools enabled.
 
-    `write_knowledge` is excluded because the CLI uses the
-    `propose_knowledge` → user approval → save flow. Direct writes would
-    bypass the approval panel.
+    `knowledge(action="write")` is disabled on this surface because the
+    CLI uses the propose → user approval → save flow. Direct writes
+    would bypass the approval panel.
     """
-    return build_base_registry(exclude=frozenset({"write_knowledge"}))
+    return build_base_registry(db_type=db_type, allow_knowledge_write=False)
 
 
 def build_mcp_registry(
     *,
     mode: str = "manual",
     allow_code_exec: bool = False,
+    db_type: str = "postgresql",
 ) -> ToolRegistry:
     """Registry for the MCP stdio server.
 
@@ -205,4 +218,8 @@ def build_mcp_registry(
     if not allow_code_exec:
         exclude |= set(CODE_EXECUTION_TOOLS)
 
-    return build_base_registry(exclude=frozenset(exclude))
+    return build_base_registry(
+        exclude=frozenset(exclude),
+        db_type=db_type,
+        allow_knowledge_write=True,
+    )

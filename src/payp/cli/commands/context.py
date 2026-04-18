@@ -25,7 +25,8 @@ def _cmd_compact() -> None:
         if stats.get("saved_tokens", 0) == 0:
             console.print("[dim]No tokens saved (conversation too short).[/dim]")
     except Exception as e:
-        console.print(f"[red]Compaction failed: {e}[/red]")
+        from payp.ui.errors import show_error
+        show_error("Compaction failed", str(e), exc=e, logger_name="payp.cli.commands.context")
 
 
 def _cmd_more() -> None:
@@ -34,11 +35,13 @@ def _cmd_more() -> None:
     from payp.ui.display import display_query_result
 
     chat = _state.get("chat_session")
-    if not chat or not getattr(chat, "last_select", None):
+    mc = getattr(chat, "multi_conn", None)
+    last = mc.get_last_select() if mc else None
+    if not last:
+        last = getattr(chat, "last_select", None)
+    if not chat or not last:
         console.print("[dim]No recent query to paginate. Run a SELECT first.[/dim]")
         return
-
-    last = chat.last_select
 
     mgr: ConnectionManager | None = _state.get("connection_manager")  # type: ignore[assignment]
     if not mgr or not mgr.is_connected:
@@ -78,12 +81,13 @@ def _cmd_more() -> None:
     try:
         result = _run_async(mgr.execute(paged_sql, limit=page_size))
     except Exception as e:
-        console.print(f"[red]Pagination failed: {e}[/red]")
+        from payp.ui.errors import show_error
+        show_error("Pagination failed", str(e), exc=e, logger_name="payp.cli.commands.context")
         return
 
     if not result.columns or result.row_count == 0:
         console.print("[dim]No more rows.[/dim]")
-        chat.last_select["truncated"] = False
+        last["truncated"] = False
         return
 
     display_query_result(
@@ -94,12 +98,55 @@ def _cmd_more() -> None:
         truncated=result.truncated,
     )
     # Advance offset for the next /more
-    chat.last_select["offset"] = offset + result.row_count
-    chat.last_select["truncated"] = result.truncated
+    last["offset"] = offset + result.row_count
+    last["truncated"] = result.truncated
 
 
-def _cmd_context() -> None:
-    """Show current context window usage."""
+def _set_schema_budget(value_str: str) -> None:
+    """Set the schema context token budget."""
+    from payp.config import load_config, save_config
+    from payp.ui.theme import Color
+
+    if not value_str:
+        config = load_config()
+        console.print(f"  Schema budget: [{Color.BRAND_ALT}]{config.schema_budget:,} tokens[/{Color.BRAND_ALT}]")
+        console.print("  [dim]Usage: /context budget 10k | /context budget 50000[/dim]")
+        return
+
+    # Parse "10k", "30K", "50000" etc
+    raw = value_str.strip().lower().rstrip("tokens").strip()
+    if raw.endswith("k"):
+        try:
+            tokens = int(float(raw[:-1]) * 1000)
+        except ValueError:
+            console.print(f"[red]Invalid value: '{value_str}'. Use e.g. 10k or 50000.[/red]")
+            return
+    else:
+        try:
+            tokens = int(raw)
+        except ValueError:
+            console.print(f"[red]Invalid value: '{value_str}'. Use e.g. 10k or 50000.[/red]")
+            return
+
+    if tokens < 1000:
+        console.print("[red]Minimum budget is 1000 tokens (T0 needs room).[/red]")
+        return
+
+    config = load_config()
+    config.schema_budget = tokens
+    save_config(config)
+    console.print(f"  Schema budget set to [{Color.BRAND_ALT}]{tokens:,} tokens[/{Color.BRAND_ALT}]")
+    console.print("  [dim]Takes effect on next message.[/dim]")
+
+
+def _cmd_context(args: str) -> None:
+    """Show current context window usage or set schema budget."""
+    parts = args.strip().split() if args.strip() else []
+
+    if parts and parts[0].lower() == "budget":
+        _set_schema_budget(parts[1] if len(parts) > 1 else "")
+        return
+
     chat = _state.get("chat_session")
     if not chat:
         console.print("[dim]No active chat session.[/dim]")
@@ -137,11 +184,55 @@ def _cmd_context() -> None:
     if stats.should_compact:
         console.print("  [yellow]⚠ Auto-compaction will trigger on next message[/yellow]")
     console.print("  [dim]Run /compact to compress older messages now[/dim]")
+    from payp.config import load_config
+    budget = load_config().schema_budget
+    console.print(f"  [dim]Schema budget: {budget:,} tokens  •  /context budget <N> to change[/dim]")
     console.print()
 
 
-def _cmd_cost() -> None:
-    """Show token usage and costs."""
+def _set_cost_limit(value_str: str) -> None:
+    """Set or show the session cost limit."""
+    from payp.config import load_config, save_config
+    from payp.ui.theme import Color
+
+    config = load_config()
+    if not value_str:
+        if config.max_session_cost_usd is not None:
+            console.print(f"  Cost limit: [{Color.BRAND_ALT}]${config.max_session_cost_usd:.2f}[/{Color.BRAND_ALT}]")
+        else:
+            console.print("  Cost limit: [dim]none (unlimited)[/dim]")
+        console.print("  [dim]Usage: /cost limit 5.00 | /cost limit off[/dim]")
+        return
+
+    if value_str.lower() in ("off", "none", "unlimited"):
+        config.max_session_cost_usd = None
+        save_config(config)
+        console.print("  Cost limit removed.")
+        return
+
+    try:
+        limit = float(value_str.lstrip("$"))
+    except ValueError:
+        console.print(f"[red]Invalid value: '{value_str}'. Use e.g. 5.00 or $10[/red]")
+        return
+
+    if limit <= 0:
+        console.print("[red]Limit must be positive.[/red]")
+        return
+
+    config.max_session_cost_usd = limit
+    save_config(config)
+    console.print(f"  Cost limit set to [{Color.BRAND_ALT}]${limit:.2f}[/{Color.BRAND_ALT}]")
+
+
+def _cmd_cost(args: str) -> None:
+    """Show token usage and costs, or set cost limit."""
+    parts = args.strip().split() if args.strip() else []
+
+    if parts and parts[0].lower() == "limit":
+        _set_cost_limit(parts[1] if len(parts) > 1 else "")
+        return
+
     from payp.core.llm import LLMClient
 
     client: LLMClient | None = _state.get("llm_client")
@@ -162,5 +253,13 @@ def _cmd_cost() -> None:
     table.add_row("Total tokens", f"{summary['total_tokens']:,}")
     table.add_row("Queries", str(summary["query_count"]))
     table.add_row("Estimated cost", f"${summary['total_cost_usd']:.4f}")
+
+    # Show cost limit if set
+    from payp.config import load_config
+    config = load_config()
+    if config.max_session_cost_usd is not None:
+        limit = config.max_session_cost_usd
+        pct = summary['total_cost_usd'] / limit * 100 if limit > 0 else 0
+        table.add_row("Cost limit", f"${limit:.2f} ({pct:.0f}% used)")
 
     console.print(table)

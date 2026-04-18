@@ -14,7 +14,7 @@ Use this skill when the user wants to run **OS-level commands** — git, cloud C
 
 ### Core Rules
 
-- **Commands run via `/bin/sh -c`** — pipes, redirects, env vars, and command chaining all work.
+- **Commands run via the system shell** (`cmd.exe /c` on Windows, `/bin/sh -c` on Unix) — pipes, redirects, env vars, and command chaining all work.
 - **Always show the command before running.** The approval UI handles this automatically in manual/secure modes.
 - **Working directory** is the user's current directory. Relative paths are resolved from there.
 - **Timeout** defaults to 30s, max 300s. Long-running commands (big backups) need an explicit `timeout`.
