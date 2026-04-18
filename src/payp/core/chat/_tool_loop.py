@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 from payp.ui.streaming import (
     display_tool_call,
     display_tool_result,
-    display_usage_line,
     stream_response,
 )
 
@@ -71,8 +70,9 @@ async def run_tool_loop(
                     }
                 )
                 continue  # retry the loop
-            # Show per-turn usage stats
-            _show_usage(session)
+            # Status line is refreshed by the outer REPL loop before the
+            # next prompt, so this function doesn't print it itself — that
+            # previously produced a duplicate bar stacked under the prompt.
             break
 
         # Process tool calls
@@ -153,8 +153,15 @@ async def run_tool_loop(
                             )
                         except Exception:
                             pass
-                    # Handle knowledge proposal — ask user before saving
-                    if tc.name == "propose_knowledge" and result.success and result.data:
+                    # Handle knowledge proposal — ask user before saving.
+                    # `knowledge(action="propose")` is the merged-tool entry
+                    # point; the legacy `propose_knowledge` name is kept for
+                    # any in-flight session replay.
+                    is_propose = (
+                        tc.name == "propose_knowledge"
+                        or (tc.name == "knowledge" and tc.arguments.get("action") == "propose")
+                    )
+                    if is_propose and result.success and result.data:
                         tool_response = await session._handle_knowledge_proposal(result.data)
 
             # Persist the tool call to the session JSONL so /resume can
@@ -204,21 +211,3 @@ async def run_tool_loop(
         )
 
     # Done
-
-
-def _show_usage(session: ChatSession) -> None:
-    """Print a right-aligned dim line with per-turn tokens, cost, context %."""
-    llm = session.llm
-    ctx_pct: float | None = None
-    try:
-        stats = session.get_context_stats()
-        ctx_pct = stats.usage_ratio * 100
-    except Exception:
-        pass
-    display_usage_line(
-        session.console,
-        llm.last_input_tokens,
-        llm.last_output_tokens,
-        llm.last_cost,
-        context_pct=ctx_pct,
-    )

@@ -65,19 +65,13 @@ async def test_list_tools_exposes_current_payp_tools() -> None:
                 "schema_search",
                 "check_cascade",
                 "table_stats",
-                # snapshots
-                "snapshot_before_delete",
-                "restore_snapshot",
-                "list_snapshots",
-                "delete_snapshot",
+                # snapshots (merged into one tool — see SnapshotsTool)
+                "snapshots",
                 # export / help
                 "export_query",
                 "payp_help",
-                # knowledge (write_knowledge IS exposed in MCP — no approval UI)
-                "read_knowledge",
-                "write_knowledge",
-                "list_knowledge",
-                "search_knowledge",
+                # knowledge (merged — action="write" enabled on MCP, no approval UI)
+                "knowledge",
                 # query library
                 "save_query",
                 "list_queries",
@@ -104,12 +98,21 @@ async def test_list_tools_exposes_current_payp_tools() -> None:
                 "invoke_skill",
                 "list_skills",
                 # require interactive approval
-                "propose_knowledge",
                 "cleanup",
                 # code execution (hidden unless PAYP_MCP_ALLOW_CODE_EXEC=1)
                 "execute_python",
                 "execute_r",
                 "execute_shell",
+                # legacy names merged into `knowledge` / `snapshots`
+                "propose_knowledge",
+                "read_knowledge",
+                "write_knowledge",
+                "list_knowledge",
+                "search_knowledge",
+                "snapshot_before_delete",
+                "restore_snapshot",
+                "list_snapshots",
+                "delete_snapshot",
                 # deleted dead class
                 "append_knowledge",
             }

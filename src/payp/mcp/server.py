@@ -289,17 +289,17 @@ def build_server(state: ServerState | None = None) -> tuple[Server, ServerState]
         if tool is None:
             return error_content(f"Unknown tool: {name}")
 
-        # Tools that need a DB connection
+        # Tools that need a DB connection. `snapshots` covers the merged
+        # create/list/restore/delete snapshot operations. `list` alone
+        # doesn't strictly need a connection but the tool errors clearly
+        # if disconnected, so keeping it here is fine.
         needs_db = name in {
             "execute_sql",
             "explain_query",
             "schema_lookup",
             "schema_search",
             "check_cascade",
-            "snapshot_before_delete",
-            "restore_snapshot",
-            "list_snapshots",
-            "delete_snapshot",
+            "snapshots",
             "export_query",
         }
         if needs_db and (

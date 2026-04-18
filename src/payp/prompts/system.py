@@ -167,8 +167,8 @@ Only call read_knowledge for tables that are NOT in the inlined knowledge block.
 The knowledge base may contain business logic, enum values, NULL semantics, valid filters, \
 and KNOWN TOTALS/COUNTS — prefer citing a known count from knowledge over re-running \
 `SELECT COUNT(*)` unless the user explicitly asked for a fresh number.
-- Use search_knowledge to find knowledge across all tables when looking for a concept or pattern \
-(e.g., 'timezone handling', 'soft delete pattern', 'status enum values').
+- Use `knowledge(action="search", query=...)` to find context across all tables when looking for a \
+concept or pattern (e.g., 'timezone handling', 'soft delete pattern', 'status enum values').
 - When the user asks to CLEAN UP, PURGE, REMOVE OLD, or FREE SPACE (sessions, queries, cache, \
 snapshots, exports), use the `cleanup` tool with an explicit `target` and `reason`. \
 Set `all=true` when the user says "all", "everything", "wipe", or "force cleanup". \
@@ -176,9 +176,9 @@ When the user says "legacy knowledge", use target="legacy_knowledge".
 - BEFORE writing INSERT, UPDATE, DELETE, or DDL: check column names in the Schema Context above first. \
 Only call schema_lookup if the table is NOT already shown in the Schema Context.
 - When you discover NEW facts about a table during work (enum values like status 1=pending, \
-NULL meanings, filter rules, FK business logic, data quality quirks), call propose_knowledge to \
-suggest adding it to the knowledge base. The USER will approve, edit, or reject before saving. \
-NEVER save knowledge silently — always propose first.
+NULL meanings, filter rules, FK business logic, data quality quirks), call \
+`knowledge(action="propose", table=..., discovery=...)` to suggest adding it to the knowledge base. \
+The USER will approve, edit, or reject before saving. NEVER save knowledge silently — always propose first.
 - BEFORE INSERTing rows with foreign keys, query the referenced table to see what IDs actually \
 exist. Example: before INSERTing into orders with customer_id=1, run \
 `SELECT id FROM customers FETCH FIRST 10 ROWS ONLY` (dialect-correct) to see real IDs. \
@@ -188,7 +188,7 @@ oracle-dwh customers have ids 41-60. Never assume IDs exist — verify.
 referenced table to find valid IDs, then retry with correct values. DO NOT stop or ask user.
 - Before any DELETE or UPDATE:
   1. Run check_cascade to identify cascading FKs. If CASCADE exists, warn the user with affected tables and row counts.
-  2. Run snapshot_before_delete for EACH affected table (including cascade targets).
+  2. Run `snapshots(action="create", table=..., operation="DELETE|UPDATE", where_clause=...)` for EACH affected table (including cascade targets).
   3. Then execute_sql (approval is automatic in MANUAL/SECURE modes).
 - Never execute destructive operations without showing them first (unless YOLO mode)
 - Never expose credentials or connection secrets in output
@@ -553,9 +553,12 @@ Do not guess or pretend you can access data.""")
             )
         dynamic_sections.append("\n".join(schema_parts))
 
-    # 6. Knowledge base — project-local (./payp/knowledge/) takes precedence over global
+    # 6. Knowledge base — list filenames only; contents fetched on demand
+    # via the `knowledge` tool (action="read" / "search"). Inlining every
+    # .md every turn costs thousands of tokens even when the user's
+    # request has nothing to do with business context.
     from payp.config import project_knowledge_dir
-    knowledge_parts = ["## Business Context"]
+    kb_names: list[str] = []
     seen: set[str] = set()
     for src_dir in (project_knowledge_dir(), knowledge_dir):
         if src_dir and src_dir.is_dir():
@@ -563,15 +566,15 @@ Do not guess or pretend you can access data.""")
                 if f.name in seen:
                     continue
                 seen.add(f.name)
-                try:
-                    content = f.read_text(encoding="utf-8").strip()
-                    if content:
-                        knowledge_parts.append(f"### {f.stem}")
-                        knowledge_parts.append(content)
-                except Exception as e:
-                    logger.debug("Prompt section generation failed: %s", e)
-    if len(knowledge_parts) > 1:
-        dynamic_sections.append("\n".join(knowledge_parts))
+                kb_names.append(f.stem)
+    if kb_names:
+        dynamic_sections.append(
+            "## Business Context (available on demand)\n"
+            "Knowledge files exist for: " + ", ".join(f"`{n}`" for n in kb_names) + ".\n"
+            "Call `knowledge` with `action=\"search\"` for a cross-file lookup, "
+            "or `action=\"read\"` with a specific `table` name, to pull the content you need. "
+            "Do NOT guess business meaning — fetch it."
+        )
 
     # 7. Tools are added separately via tool definitions, not in prompt text
 

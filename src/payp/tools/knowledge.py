@@ -2,6 +2,11 @@
 
 Key principle: LLM proposes knowledge, user confirms before saving.
 All reads/writes go through the pluggable MemoryBackend (native or mempalace).
+
+Public registered tool: `KnowledgeTool` (name=`knowledge`). It dispatches
+by an `action` arg to the five internal operations (read / search / list /
+propose / write). Bundling them into one schema saves ~250 tokens per
+turn vs registering five separate tool definitions.
 """
 
 from __future__ import annotations
@@ -247,4 +252,100 @@ class SearchKnowledgeTool(BaseTool):
             success=True,
             data={"matches": matches, "count": len(matches), "query": query},
             summary=f"{len(matches)} match(es) for '{query}'",
+        )
+
+
+class KnowledgeTool(BaseTool):
+    """Merged knowledge tool — single schema, dispatches by `action`.
+
+    Replaces five separate registrations (read/search/list/propose/write)
+    with one. The `propose` action is still special-cased by the chat
+    loop for the human-in-the-loop approval flow — see _tool_loop.py.
+    """
+
+    name = "knowledge"
+    description = (
+        "Read, search, list, propose, or write business knowledge about tables "
+        "(column meanings, enum values, quirks, rules). Pick `action`:\n"
+        "- `read`: fetch knowledge for one table (requires `table`).\n"
+        "- `search`: cross-file keyword/semantic search (requires `query`).\n"
+        "- `list`: list every knowledge file, optionally filtered by connection.\n"
+        "- `propose`: suggest new knowledge for the user to approve "
+        "(requires `table` + `discovery`; `section` optional).\n"
+        "- `write`: replace a knowledge file outright (requires `table` + `content`). "
+        "Only use after approval, or when bootstrapping from scratch."
+    )
+    is_read_only = True  # read/search/list/propose are read-only; write flips per-call
+
+    def __init__(self, allow_write: bool = False) -> None:
+        # The CLI surface keeps propose→approve→write flow, so it blocks
+        # `action=write` at the tool boundary. MCP surfaces pass
+        # allow_write=True because there is no approval channel there.
+        self._allow_write = allow_write
+        self._read = ReadKnowledgeTool()
+        self._search = SearchKnowledgeTool()
+        self._list = ListKnowledgeTool()
+        self._propose = ProposeKnowledgeTool()
+        self._write = WriteKnowledgeTool()
+
+    def get_parameters_schema(self) -> dict[str, Any]:
+        actions = ["read", "search", "list", "propose"]
+        if self._allow_write:
+            actions.append("write")
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": actions,
+                    "description": "Which operation to perform",
+                },
+                "table": {"type": "string", "description": "Table name (read/propose/write)"},
+                "query": {"type": "string", "description": "Search term (search)"},
+                "connection": {
+                    "type": "string",
+                    "description": "Connection name (omit to use active)",
+                },
+                "limit": {"type": "integer", "description": "Max results (search, default 5)"},
+                "discovery": {
+                    "type": "string",
+                    "description": "What you discovered — markdown (propose)",
+                },
+                "section": {
+                    "type": "string",
+                    "enum": [
+                        "business_logic",
+                        "columns",
+                        "relationships",
+                        "usage_examples",
+                        "data_quality",
+                    ],
+                    "description": "Which section of the file (propose, default business_logic)",
+                },
+                "content": {"type": "string", "description": "Full markdown file body (write)"},
+            },
+            "required": ["action"],
+        }
+
+    async def call(self, args: dict[str, Any], context: dict[str, Any]) -> ToolResult:
+        action = (args.get("action") or "").strip().lower()
+        if action == "read":
+            return await self._read.call(args, context)
+        if action == "search":
+            return await self._search.call(args, context)
+        if action == "list":
+            return await self._list.call(args, context)
+        if action == "propose":
+            return await self._propose.call(args, context)
+        if action == "write":
+            if not self._allow_write:
+                return ToolResult(
+                    success=False,
+                    error="action=write is disabled on this surface. "
+                    "Use action=propose so the user can approve the change.",
+                )
+            return await self._write.call(args, context)
+        return ToolResult(
+            success=False,
+            error=f"Unknown action '{action}'. Use one of: read, search, list, propose, write.",
         )

@@ -119,55 +119,56 @@ def _log_memory_backend_to_session(backend_name: str) -> None:
         pass
 
 
-def _build_toolbar() -> str:
-    """Build the persistent status line content."""
+def _gather_status_inputs() -> tuple[str | None, int, float, int | None, str | None]:
+    """Snapshot model / tokens / cost / ctx% / connection for the status line.
+
+    Returned as a plain tuple so both the live toolbar and the post-turn Rich
+    footer can feed it through the same formatter (ui.status_bar). Any
+    missing piece (no model yet, no cost tracker, no ctx estimate) is
+    returned as None / 0 so the formatter can drop it cleanly.
+    """
     from payp.config import load_model_roles
 
-    parts: list[str] = []
-
-    # Model name
+    model: str | None = None
     try:
-        roles = load_model_roles()
-        model = roles.executor
-        # Shorten: "azure/gpt-5.4" -> "gpt-5.4", "openrouter/google/gemma..." -> "gemma..."
-        short_model = model.rsplit("/", 1)[-1] if "/" in model else model
-        if len(short_model) > 20:
-            short_model = short_model[:17] + "..."
-        parts.append(short_model)
+        model = load_model_roles().executor
     except Exception:
         pass
 
-    # Token usage and cost
+    total_tok = 0
+    total_cost = 0.0
+    ctx_pct: int | None = None
+
     client = _state.get("llm_client")
     if client:
         ct = client.cost_tracker
         total_tok = ct.total_input_tokens + ct.total_output_tokens
-        if total_tok > 0:
-            if total_tok >= 1000:
-                parts.append(f"{total_tok / 1000:.1f}k tok")
-            else:
-                parts.append(f"{total_tok} tok")
-        if ct.total_cost_usd > 0:
-            parts.append(f"${ct.total_cost_usd:.4f}")
-
-        # Context usage - last turn's input tokens vs model context window
+        total_cost = ct.total_cost_usd
         if ct.last_input_tokens > 0:
             try:
                 from payp.core.compaction import get_model_context_size
-                model_name = client.get_executor_model()
-                max_ctx = get_model_context_size(model_name)
+                max_ctx = get_model_context_size(client.get_executor_model())
                 if max_ctx > 0:
-                    pct = int(ct.last_input_tokens / max_ctx * 100)
-                    parts.append(f"ctx {pct}%")
+                    ctx_pct = int(ct.last_input_tokens / max_ctx * 100)
             except Exception:
                 pass
 
-    # Connection
-    conn_name = _state.get("active_connection")
-    if conn_name:
-        parts.append(conn_name)
+    return model, total_tok, total_cost, ctx_pct, _state.get("active_connection")
 
-    return " \u2502 ".join(parts) if parts else ""
+
+def print_frozen_status_line() -> None:
+    """Rich-print the current status line once, just above the prompt.
+
+    Called from the main loop before each `session.prompt()` call. This is
+    the single source of status display — no prompt_toolkit bottom-toolbar,
+    no post-turn duplicate. The line stays in scrollback so streaming
+    output scrolls past it; the next prompt shows a fresh refreshed copy.
+    No-ops when no segments qualify (e.g. pre-first-response idle state
+    before any model is configured).
+    """
+    from payp.ui.status_bar import print_frozen_status
+
+    print_frozen_status(console, *_gather_status_inputs())
 
 
 def _build_prompt():  # -> FormattedText
@@ -204,7 +205,6 @@ def _interactive_loop() -> None:
             "completion-menu.completion.current": "noinherit underline",
             "completion-menu.meta.completion": "noinherit #888888",
             "completion-menu.meta.completion.current": "noinherit #888888 underline",
-            "bottom-toolbar": "bg:#333333 #aaaaaa",
             "db": "#B4E04C",
         }),
     )
@@ -213,8 +213,12 @@ def _interactive_loop() -> None:
     _ensure_chat_session()
 
     while True:
+        # Single source of status — prints right above the prompt every
+        # iteration so it stays visible between turns and reflects the
+        # latest tokens / cost / ctx / connection after each response.
+        print_frozen_status_line()
         try:
-            user_input = session.prompt(_build_prompt(), bottom_toolbar=_build_toolbar).strip()
+            user_input = session.prompt(_build_prompt()).strip()
         except (EOFError, KeyboardInterrupt):
             _stop_banner_animator()
             console.print("\n[dim]Goodbye![/dim]")

@@ -390,26 +390,34 @@ body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFo
   'Segoe UI',Helvetica,Arial,sans-serif;overflow:hidden}
 header{position:fixed;top:0;left:0;right:0;z-index:10;height:48px;padding:0 20px;
   background:#161b22;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:16px}
-header h1{font-size:15px;font-weight:600;color:#58a6ff;white-space:nowrap}
+header h1{font-size:15px;font-weight:600;white-space:nowrap;margin:0;
+  letter-spacing:0.3px}
+header h1 a{text-decoration:none;
+  background:linear-gradient(90deg,#A8006F 0%,#B4E04C 100%);
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;color:transparent;
+  transition:filter .15s}
+header h1 a:hover{filter:brightness(1.25) saturate(1.1)}
+header h1 a:focus-visible{outline:1px solid #B4E04C;outline-offset:3px;border-radius:2px}
 .meta{font-size:12px;color:#8b949e;white-space:nowrap}
 #search{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;
-  padding:4px 10px;font-size:12px;width:200px;outline:none}
-#search:focus{border-color:#58a6ff}
+  padding:4px 10px;font-size:12px;width:200px;outline:none;transition:border-color .15s}
+#search:focus{border-color:#A8006F}
 .hint{font-size:11px;color:#484f58;margin-left:auto;white-space:nowrap}
 svg{position:fixed;top:48px;left:0}
-.edge{fill:none;stroke:#58a6ff;stroke-width:1.5;stroke-opacity:0.35}
-.edge.highlight{stroke-opacity:1;stroke-width:2.5}
+.edge{fill:none;stroke:#A8006F;stroke-width:1.5;stroke-opacity:0.4}
+.edge.highlight{stroke:#B4E04C;stroke-opacity:1;stroke-width:2.5}
 .edge.dim{stroke-opacity:0.08}
 .card-bg{fill:#161b22;stroke:#30363d;stroke-width:1;rx:6}
-.card-bg.highlight{stroke:#58a6ff;stroke-width:2}
+.card-bg.highlight{stroke:#B4E04C;stroke-width:2}
 .card-bg.dim{opacity:0.2}
-.card-header{fill:#238636;rx:6}
+.card-header{fill:url(#pp-hdr-grad);rx:6}
 .col-row-bg{fill:transparent}
-.col-row-bg:hover{fill:rgba(88,166,255,0.08)}
+.col-row-bg:hover{fill:rgba(168,0,111,0.12)}
 .col-name{fill:#c9d1d9;font-size:12px}
 .col-type{fill:#8b949e;font-size:11px}
-.badge-pk{fill:#d29922;font-size:9px;font-weight:700}
-.badge-fk{fill:#58a6ff;font-size:9px;font-weight:700}
+.badge-pk{fill:#B4E04C;font-size:9px;font-weight:700}
+.badge-fk{fill:#A8006F;font-size:9px;font-weight:700}
 .header-text{fill:#fff;font-size:13px;font-weight:600}
 .table-group{cursor:grab}
 .table-group:active{cursor:grabbing}
@@ -417,13 +425,13 @@ svg{position:fixed;top:48px;left:0}
 .table-group.dim .card-header{opacity:0.15}
 .table-group.dim text{opacity:0.1}
 .table-group.dim .col-row-bg{pointer-events:none}
-.marker-one{fill:none;stroke:#58a6ff;stroke-width:1.5}
-.marker-many{fill:#58a6ff;stroke:none}
+.marker-one{fill:none;stroke:#A8006F;stroke-width:1.5}
+.marker-many{fill:#A8006F;stroke:none}
 </style>
 </head>
 <body>
 <header>
-  <h1>payp ERD</h1>
+  <h1><a href="https://payp-cli.com" target="_blank" rel="noopener noreferrer">payp ERD</a></h1>
   <span class="meta" id="meta"></span>
   <input type="text" id="search" placeholder="Search tables..." autocomplete="off">
   <span class="hint">Drag &middot; Scroll zoom &middot; Click focus &middot; Esc reset</span>
@@ -451,6 +459,15 @@ document.getElementById('meta').textContent =
   DATA.meta.tableCount + ' tables \u00b7 ' + DATA.meta.relCount + ' relationships';
 
 const svg = d3.select('#canvas').attr('width', W).attr('height', H);
+
+// Brand gradient reused by every table-card header (per-card object bounding box).
+const defs = svg.append('defs');
+const hdrGrad = defs.append('linearGradient')
+  .attr('id', 'pp-hdr-grad')
+  .attr('x1', '0%').attr('y1', '0%').attr('x2', '100%').attr('y2', '0%');
+hdrGrad.append('stop').attr('offset', '0%').attr('stop-color', '#A8006F');
+hdrGrad.append('stop').attr('offset', '100%').attr('stop-color', '#B4E04C');
+
 const g = svg.append('g');
 
 // Zoom
@@ -510,10 +527,10 @@ cards.append('rect').attr('class', 'card-bg')
 // Header background (top rounded, bottom square via clipPath)
 cards.append('rect').attr('class', 'card-header')
   .attr('width', d => d.w).attr('height', HEADER_H);
-// Square-off bottom corners of header
+// Square-off bottom corners of header (reuses the brand gradient).
 cards.append('rect')
   .attr('y', HEADER_H - 6).attr('width', d => d.w).attr('height', 6)
-  .attr('fill', '#238636');
+  .attr('fill', 'url(#pp-hdr-grad)');
 
 // Header text
 cards.append('text').attr('class', 'header-text')
